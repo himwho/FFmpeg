@@ -58,7 +58,7 @@ static void put_audio_specific_config(AVCodecContext *avctx)
 {
     PutBitContext pb;
     AACEncContext *s = avctx->priv_data;
-    int channels = s->channels - (s->channels == 8 ? 1 : 0);
+    int channels = s->channels - (s->channels >= 8 ? 1 : 0);
 
     init_put_bits(&pb, avctx->extradata, avctx->extradata_size);
     put_bits(&pb, 5, s->profile+1); //profile
@@ -539,7 +539,10 @@ static int aac_encode_frame(AVCodecContext *avctx, AVPacket *avpkt,
     start_ch = 0;
     for (i = 0; i < s->chan_map[0]; i++) {
         FFPsyWindowInfo* wi = windows + start_ch;
+        
         tag      = s->chan_map[i+1];
+        if(tag == TYPE_LFE) tag = TYPE_SCE;
+        
         chans    = tag == TYPE_CPE ? 2 : 1;
         cpe      = &s->cpe[i];
         for (ch = 0; ch < chans; ch++) {
@@ -933,8 +936,7 @@ static av_cold int aac_encode_init(AVCodecContext *avctx)
     if (!avctx->bit_rate) {
         for (i = 1; i <= s->chan_map[0]; i++) {
             avctx->bit_rate += s->chan_map[i] == TYPE_CPE ? 128000 : /* Pair */
-                               s->chan_map[i] == TYPE_LFE ? 16000  : /* LFE  */
-                                                            69000  ; /* SCE  */
+                               s->chan_map[i] == 69000  ; /* SCE  */
         }
     }
 

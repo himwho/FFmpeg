@@ -36,7 +36,7 @@
 /** Total number of codebooks, including special ones **/
 #define CB_TOT_ALL 15
 
-#define AAC_MAX_CHANNELS 8
+#define AAC_MAX_CHANNELS 10
 
 extern const uint8_t *ff_aac_swb_size_1024[];
 extern const int      ff_aac_swb_size_1024_len;
@@ -53,6 +53,8 @@ static const uint8_t aac_chan_configs[AAC_MAX_CHANNELS][6] = {
     {4, TYPE_SCE, TYPE_CPE, TYPE_CPE, TYPE_LFE},           // 6 channels - front center + stereo + back stereo + LFE
     {0},                                                   // 7 channels - invalid without PCE
     {5, TYPE_SCE, TYPE_CPE, TYPE_CPE, TYPE_CPE, TYPE_LFE}, // 8 channels - front center + front stereo + side stereo + back stereo + LFE
+    {0}, // 9 channels
+    {6, TYPE_SCE, TYPE_CPE, TYPE_CPE, TYPE_CPE, TYPE_CPE, TYPE_LFE}, // 10 channels
 };
 
 /**
@@ -66,7 +68,9 @@ static const uint8_t aac_chan_maps[AAC_MAX_CHANNELS][AAC_MAX_CHANNELS] = {
     { 2, 0, 1, 3, 4 },
     { 2, 0, 1, 4, 5, 3 },
     { 0 },
-    { 2, 0, 1, 6, 7, 4, 5, 3 },
+    { 0, 1, 2, 3, 4, 5, 6, 7 },
+    { 0, 1, 2, 3, 4, 5, 6, 7, 8 },
+    { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 },
 };
 
 /* duplicated from avpriv_mpeg4audio_sample_rates to avoid shared build
