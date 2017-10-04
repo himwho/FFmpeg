@@ -58,7 +58,7 @@ static void put_audio_specific_config(AVCodecContext *avctx)
 {
     PutBitContext pb;
     AACEncContext *s = avctx->priv_data;
-    int channels = s->channels - (s->channels >= 8 ? 1 : 0);
+    int channels = s->channels - (s->channels == 8 ? 1 : 0);
 
     init_put_bits(&pb, avctx->extradata, avctx->extradata_size);
     put_bits(&pb, 5, s->profile+1); //profile
