@@ -91,20 +91,12 @@ static inline int v4l2_get_ext_ctrl(V4L2m2mContext *s, unsigned int id, signed i
     return 0;
 }
 
-static int match_profile(const void *a, const void *b)
-{
-    if (*(unsigned int *)a == *(unsigned int *)b)
-        return 0;
-
-    return 1;
-}
-
 static inline unsigned int v4l2_h264_profile_from_ff(int p)
 {
-    struct h264_profile  {
+    static const struct h264_profile  {
         unsigned int ffmpeg_val;
         unsigned int v4l2_val;
-    } *val, profile[] = {
+    } profile[] = {
         { FF_PROFILE_H264_CONSTRAINED_BASELINE, MPEG_VIDEO(H264_PROFILE_CONSTRAINED_BASELINE) },
         { FF_PROFILE_H264_HIGH_444_PREDICTIVE, MPEG_VIDEO(H264_PROFILE_HIGH_444_PREDICTIVE) },
         { FF_PROFILE_H264_HIGH_422_INTRA, MPEG_VIDEO(H264_PROFILE_HIGH_422_INTRA) },
@@ -117,33 +109,33 @@ static inline unsigned int v4l2_h264_profile_from_ff(int p)
         { FF_PROFILE_H264_MAIN, MPEG_VIDEO(H264_PROFILE_MAIN) },
         { FF_PROFILE_H264_HIGH, MPEG_VIDEO(H264_PROFILE_HIGH) },
     };
-    size_t len = FF_ARRAY_ELEMS(profile);
+    int i;
 
-    val = lfind(&p, profile, &len, sizeof(profile[0]), match_profile);
-    if (val)
-        return val->v4l2_val;
-
+    for (i = 0; i < FF_ARRAY_ELEMS(profile); i++) {
+        if (profile[i].ffmpeg_val == p)
+            return profile[i].v4l2_val;
+    }
     return AVERROR(ENOENT);
 }
 
 static inline int v4l2_mpeg4_profile_from_ff(int p)
 {
-    struct mpeg4_profile {
+    static const struct mpeg4_profile {
         unsigned int ffmpeg_val;
         unsigned int v4l2_val;
-    } *val, profile[] = {
+    } profile[] = {
         { FF_PROFILE_MPEG4_ADVANCED_CODING, MPEG_VIDEO(MPEG4_PROFILE_ADVANCED_CODING_EFFICIENCY) },
         { FF_PROFILE_MPEG4_ADVANCED_SIMPLE, MPEG_VIDEO(MPEG4_PROFILE_ADVANCED_SIMPLE) },
         { FF_PROFILE_MPEG4_SIMPLE_SCALABLE, MPEG_VIDEO(MPEG4_PROFILE_SIMPLE_SCALABLE) },
         { FF_PROFILE_MPEG4_SIMPLE, MPEG_VIDEO(MPEG4_PROFILE_SIMPLE) },
         { FF_PROFILE_MPEG4_CORE, MPEG_VIDEO(MPEG4_PROFILE_CORE) },
     };
-    size_t len = FF_ARRAY_ELEMS(profile);
+    int i;
 
-    val = lfind(&p, profile, &len, sizeof(profile[0]), match_profile);
-    if (val)
-        return val->v4l2_val;
-
+    for (i = 0; i < FF_ARRAY_ELEMS(profile); i++) {
+        if (profile[i].ffmpeg_val == p)
+            return profile[i].v4l2_val;
+    }
     return AVERROR(ENOENT);
 }
 
@@ -188,7 +180,7 @@ static int v4l2_prepare_encoder(V4L2m2mContext *s)
 
     av_log(avctx, AV_LOG_DEBUG,
         "Encoder Context: id (%d), profile (%d), frame rate(%d/%d), number b-frames (%d), "
-        "gop size (%d), bit rate (%ld), qmin (%d), qmax (%d)\n",
+        "gop size (%d), bit rate (%"PRId64"), qmin (%d), qmax (%d)\n",
         avctx->codec_id, avctx->profile, avctx->framerate.num, avctx->framerate.den,
         avctx->max_b_frames, avctx->gop_size, avctx->bit_rate, avctx->qmin, avctx->qmax);
 
@@ -212,7 +204,7 @@ static int v4l2_prepare_encoder(V4L2m2mContext *s)
             v4l2_set_ext_ctrl(s, MPEG_CID(MPEG4_PROFILE), val, "mpeg4 profile");
         qmin_cid = MPEG_CID(MPEG4_MIN_QP);
         qmax_cid = MPEG_CID(MPEG4_MAX_QP);
-        if (avctx->flags & CODEC_FLAG_QPEL)
+        if (avctx->flags & AV_CODEC_FLAG_QPEL)
             v4l2_set_ext_ctrl(s, MPEG_CID(MPEG4_QPEL), 1, "qpel");
         qmin = 1;
         qmax = 31;
@@ -250,7 +242,7 @@ static int v4l2_prepare_encoder(V4L2m2mContext *s)
 
 static int v4l2_send_frame(AVCodecContext *avctx, const AVFrame *frame)
 {
-    V4L2m2mContext *s = avctx->priv_data;
+    V4L2m2mContext *s = ((V4L2m2mPriv*)avctx->priv_data)->context;
     V4L2Context *const output = &s->output;
 
     return ff_v4l2_context_enqueue_frame(output, frame);
@@ -258,7 +250,7 @@ static int v4l2_send_frame(AVCodecContext *avctx, const AVFrame *frame)
 
 static int v4l2_receive_packet(AVCodecContext *avctx, AVPacket *avpkt)
 {
-    V4L2m2mContext *s = avctx->priv_data;
+    V4L2m2mContext *s = ((V4L2m2mPriv*)avctx->priv_data)->context;
     V4L2Context *const capture = &s->capture;
     V4L2Context *const output = &s->output;
     int ret;
@@ -288,10 +280,16 @@ dequeue:
 
 static av_cold int v4l2_encode_init(AVCodecContext *avctx)
 {
-    V4L2m2mContext *s = avctx->priv_data;
-    V4L2Context *capture = &s->capture;
-    V4L2Context *output = &s->output;
+    V4L2Context *capture, *output;
+    V4L2m2mContext *s;
     int ret;
+
+    ret = ff_v4l2_m2m_create_context(avctx, &s);
+    if (ret < 0)
+        return ret;
+
+    capture = &s->capture;
+    output  = &s->output;
 
     /* common settings output/capture */
     output->height = capture->height = avctx->height;
@@ -314,13 +312,13 @@ static av_cold int v4l2_encode_init(AVCodecContext *avctx)
     return v4l2_prepare_encoder(s);
 }
 
-#define OFFSET(x) offsetof(V4L2m2mContext, x)
+#define OFFSET(x) offsetof(V4L2m2mPriv, x)
 #define FLAGS AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_ENCODING_PARAM
 
 static const AVOption options[] = {
     V4L_M2M_DEFAULT_OPTS,
     { "num_capture_buffers", "Number of buffers in the capture context",
-        OFFSET(capture.num_buffers), AV_OPT_TYPE_INT, {.i64 = 4 }, 4, INT_MAX, FLAGS },
+        OFFSET(num_capture_buffers), AV_OPT_TYPE_INT, {.i64 = 4 }, 4, INT_MAX, FLAGS },
     { NULL },
 };
 
@@ -337,12 +335,14 @@ AVCodec ff_ ## NAME ## _v4l2m2m_encoder = { \
     .long_name      = NULL_IF_CONFIG_SMALL("V4L2 mem2mem " LONGNAME " encoder wrapper"),\
     .type           = AVMEDIA_TYPE_VIDEO,\
     .id             = CODEC ,\
-    .priv_data_size = sizeof(V4L2m2mContext),\
+    .priv_data_size = sizeof(V4L2m2mPriv),\
     .priv_class     = &v4l2_m2m_ ## NAME ##_enc_class,\
     .init           = v4l2_encode_init,\
     .send_frame     = v4l2_send_frame,\
     .receive_packet = v4l2_receive_packet,\
     .close          = ff_v4l2_m2m_codec_end,\
+    .capabilities   = AV_CODEC_CAP_HARDWARE | AV_CODEC_CAP_DELAY, \
+    .wrapper_name   = "v4l2m2m", \
 };
 
 M2MENC(mpeg4,"MPEG4", AV_CODEC_ID_MPEG4);
