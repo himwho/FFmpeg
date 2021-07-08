@@ -176,6 +176,7 @@ typedef struct NSVContext {
     int16_t avsync;
     AVRational framerate;
     uint32_t *nsvs_timestamps;
+    int nsvf;
 } NSVContext;
 
 static const AVCodecTag nsv_codec_video_tags[] = {
@@ -265,6 +266,12 @@ static int nsv_parse_NSVf_header(AVFormatContext *s)
     int table_entries_used;
 
     nsv->state = NSV_UNSYNC; /* in case we fail */
+
+    if (nsv->nsvf) {
+        av_log(s, AV_LOG_TRACE, "Multiple NSVf\n");
+        return 0;
+    }
+    nsv->nsvf = 1;
 
     size = avio_rl32(pb);
     if (size < 28)
@@ -454,7 +461,7 @@ static int nsv_parse_NSVs_header(AVFormatContext *s)
             st->codecpar->codec_tag = atag;
             st->codecpar->codec_id = ff_codec_get_id(nsv_codec_audio_tags, atag);
 
-            st->need_parsing = AVSTREAM_PARSE_FULL; /* for PCM we will read a chunk later and put correct info */
+            st->internal->need_parsing = AVSTREAM_PARSE_FULL; /* for PCM we will read a chunk later and put correct info */
 
             /* set timebase to common denominator of ms and framerate */
             avpriv_set_pts_info(st, 64, 1, framerate.num*1000);
@@ -485,8 +492,9 @@ static int nsv_read_header(AVFormatContext *s)
     nsv->ahead[0].data = nsv->ahead[1].data = NULL;
 
     for (i = 0; i < NSV_MAX_RESYNC_TRIES; i++) {
-        if (nsv_resync(s) < 0)
-            return -1;
+        err = nsv_resync(s);
+        if (err < 0)
+            return err;
         if (nsv->state == NSV_FOUND_NSVF) {
             err = nsv_parse_NSVf_header(s);
             if (err < 0)
@@ -501,7 +509,8 @@ static int nsv_read_header(AVFormatContext *s)
         }
     }
     if (s->nb_streams < 1) /* no luck so far */
-        return -1;
+        return AVERROR_INVALIDDATA;
+
     /* now read the first chunk, so we can attempt to decode more info */
     err = nsv_read_chunk(s, 1);
 
@@ -600,7 +609,7 @@ null_chunk_retry:
             asize-=4;
             av_log(s, AV_LOG_TRACE, "NSV RAWAUDIO: bps %d, nchan %d, srate %d\n", bps, channels, samplerate);
             if (fill_header) {
-                st[NSV_ST_AUDIO]->need_parsing = AVSTREAM_PARSE_NONE; /* we know everything */
+                st[NSV_ST_AUDIO]->internal->need_parsing = AVSTREAM_PARSE_NONE; /* we know everything */
                 if (bps != 16) {
                     av_log(s, AV_LOG_TRACE, "NSV AUDIO bit/sample != 16 (%d)!!!\n", bps);
                 }
@@ -647,10 +656,8 @@ static int nsv_read_packet(AVFormatContext *s, AVPacket *pkt)
     /* now pick one of the plates */
     for (i = 0; i < 2; i++) {
         if (nsv->ahead[i].data) {
-            /* avoid the cost of new_packet + memcpy(->data) */
-            memcpy(pkt, &nsv->ahead[i], sizeof(AVPacket));
-            nsv->ahead[i].data = NULL; /* we ate that one */
-            return pkt->size;
+            av_packet_move_ref(pkt, &nsv->ahead[i]);
+            return 0;
         }
     }
 
@@ -669,10 +676,10 @@ static int nsv_read_seek(AVFormatContext *s, int stream_index, int64_t timestamp
     if(index < 0)
         return -1;
 
-    if (avio_seek(s->pb, st->index_entries[index].pos, SEEK_SET) < 0)
+    if (avio_seek(s->pb, st->internal->index_entries[index].pos, SEEK_SET) < 0)
         return -1;
 
-    nst->frame_offset = st->index_entries[index].timestamp;
+    nst->frame_offset = st->internal->index_entries[index].timestamp;
     nsv->state = NSV_UNSYNC;
     return 0;
 }
@@ -690,7 +697,7 @@ static int nsv_read_close(AVFormatContext *s)
     return 0;
 }
 
-static int nsv_probe(AVProbeData *p)
+static int nsv_probe(const AVProbeData *p)
 {
     int i, score = 0;
 
@@ -721,10 +728,11 @@ static int nsv_probe(AVProbeData *p)
     return score;
 }
 
-AVInputFormat ff_nsv_demuxer = {
+const AVInputFormat ff_nsv_demuxer = {
     .name           = "nsv",
     .long_name      = NULL_IF_CONFIG_SMALL("Nullsoft Streaming Video"),
     .priv_data_size = sizeof(NSVContext),
+    .flags_internal = FF_FMT_INIT_CLEANUP,
     .read_probe     = nsv_probe,
     .read_header    = nsv_read_header,
     .read_packet    = nsv_read_packet,

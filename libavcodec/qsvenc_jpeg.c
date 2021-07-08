@@ -29,7 +29,6 @@
 
 #include "avcodec.h"
 #include "internal.h"
-#include "h264.h"
 #include "qsv.h"
 #include "qsv_internal.h"
 #include "qsvenc.h"
@@ -64,6 +63,7 @@ static av_cold int qsv_enc_close(AVCodecContext *avctx)
 #define OFFSET(x) offsetof(QSVMJPEGEncContext, x)
 #define VE AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_ENCODING_PARAM
 static const AVOption options[] = {
+    { "async_depth", "Maximum processing parallelism", OFFSET(qsv.async_depth), AV_OPT_TYPE_INT, { .i64 = ASYNC_DEPTH_DEFAULT }, 1, INT_MAX, VE },
     { NULL },
 };
 
@@ -74,7 +74,12 @@ static const AVClass class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-AVCodec ff_mjpeg_qsv_encoder = {
+static const AVCodecDefault qsv_enc_defaults[] = {
+    { "global_quality",  "80" },
+    { NULL },
+};
+
+const AVCodec ff_mjpeg_qsv_encoder = {
     .name           = "mjpeg_qsv",
     .long_name      = NULL_IF_CONFIG_SMALL("MJPEG (Intel Quick Sync Video acceleration)"),
     .priv_data_size = sizeof(QSVMJPEGEncContext),
@@ -88,5 +93,7 @@ AVCodec ff_mjpeg_qsv_encoder = {
                                                     AV_PIX_FMT_QSV,
                                                     AV_PIX_FMT_NONE },
     .priv_class     = &class,
+    .defaults       = qsv_enc_defaults,
     .wrapper_name   = "qsv",
+    .hw_configs     = ff_qsv_enc_hw_configs,
 };

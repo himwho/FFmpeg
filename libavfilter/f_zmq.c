@@ -139,7 +139,7 @@ static int recv_msg(AVFilterContext *ctx, char **buf, int *buf_size)
         ret = AVERROR(ENOMEM);
         goto end;
     }
-    memcpy(*buf, zmq_msg_data(&msg), *buf_size);
+    memcpy(*buf, zmq_msg_data(&msg), *buf_size - 1);
     (*buf)[*buf_size-1] = 0;
 
 end:
@@ -225,7 +225,7 @@ static const AVFilterPad zmq_outputs[] = {
     { NULL }
 };
 
-AVFilter ff_vf_zmq = {
+const AVFilter ff_vf_zmq = {
     .name        = "zmq",
     .description = NULL_IF_CONFIG_SMALL("Receive commands through ZMQ and broker them to filters."),
     .init        = init,
@@ -260,7 +260,7 @@ static const AVFilterPad azmq_outputs[] = {
     { NULL }
 };
 
-AVFilter ff_af_azmq = {
+const AVFilter ff_af_azmq = {
     .name        = "azmq",
     .description = NULL_IF_CONFIG_SMALL("Receive commands through ZMQ and broker them to filters."),
     .init        = init,

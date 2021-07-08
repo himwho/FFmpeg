@@ -18,6 +18,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "libavutil/attributes.h"
 #include "libavutil/x86/cpu.h"
 #include "libswresample/swresample_internal.h"
 
@@ -33,8 +34,8 @@ D(int16, sse2)
 av_cold int swri_rematrix_init_x86(struct SwrContext *s){
 #if HAVE_X86ASM
     int mm_flags = av_get_cpu_flags();
-    int nb_in  = av_get_channel_layout_nb_channels(s->in_ch_layout);
-    int nb_out = av_get_channel_layout_nb_channels(s->out_ch_layout);
+    int nb_in  = s->used_ch_count;
+    int nb_out = s->out.ch_count;
     int num    = nb_in * nb_out;
     int i,j;
 

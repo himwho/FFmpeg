@@ -30,7 +30,7 @@ typedef struct {
     FFDemuxSubtitlesQueue q;
 } SRTContext;
 
-static int srt_probe(AVProbeData *p)
+static int srt_probe(const AVProbeData *p)
 {
     int v;
     char buf[64], *pbuf;
@@ -232,10 +232,11 @@ static int srt_read_close(AVFormatContext *s)
     return 0;
 }
 
-AVInputFormat ff_srt_demuxer = {
+const AVInputFormat ff_srt_demuxer = {
     .name        = "srt",
     .long_name   = NULL_IF_CONFIG_SMALL("SubRip subtitle"),
     .priv_data_size = sizeof(SRTContext),
+    .flags_internal = FF_FMT_INIT_CLEANUP,
     .read_probe  = srt_probe,
     .read_header = srt_read_header,
     .read_packet = srt_read_packet,

@@ -31,6 +31,7 @@ static int afc_read_header(AVFormatContext *s)
 {
     AFCDemuxContext *c = s->priv_data;
     AVStream *st;
+    int ret;
 
     st = avformat_new_stream(s, NULL);
     if (!st)
@@ -40,8 +41,8 @@ static int afc_read_header(AVFormatContext *s)
     st->codecpar->channels   = 2;
     st->codecpar->channel_layout = AV_CH_LAYOUT_STEREO;
 
-    if (ff_alloc_extradata(st->codecpar, 1))
-        return AVERROR(ENOMEM);
+    if ((ret = ff_alloc_extradata(st->codecpar, 1)) < 0)
+        return ret;
     st->codecpar->extradata[0] = 8 * st->codecpar->channels;
 
     c->data_end = avio_rb32(s->pb) + 32LL;
@@ -68,7 +69,7 @@ static int afc_read_packet(AVFormatContext *s, AVPacket *pkt)
     return ret;
 }
 
-AVInputFormat ff_afc_demuxer = {
+const AVInputFormat ff_afc_demuxer = {
     .name           = "afc",
     .long_name      = NULL_IF_CONFIG_SMALL("AFC"),
     .priv_data_size = sizeof(AFCDemuxContext),

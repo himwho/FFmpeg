@@ -92,6 +92,9 @@
 #include "libavutil/float_dsp.h"
 #include "libavutil/intfloat.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem_internal.h"
+#include "libavutil/thread.h"
+
 #include "avcodec.h"
 #include "internal.h"
 #include "get_bits.h"
@@ -210,6 +213,7 @@ typedef struct WMAProDecodeCtx {
     int              subframe_offset;               ///< subframe offset in the bit reservoir
     uint8_t          packet_loss;                   ///< set in case of bitstream error
     uint8_t          packet_done;                   ///< set when a packet is fully decoded
+    uint8_t          eof_done;                      ///< set when EOF reached and extra subframe is written (XMA1/2)
 
     /* frame decode state */
     uint32_t         frame_num;                     ///< current frame number (not used for decoding)
@@ -306,6 +310,38 @@ static av_cold int get_rate(AVCodecContext *avctx)
     return avctx->sample_rate;
 }
 
+static av_cold void decode_init_static(void)
+{
+    INIT_VLC_STATIC(&sf_vlc, SCALEVLCBITS, HUFF_SCALE_SIZE,
+                    scale_huffbits, 1, 1,
+                    scale_huffcodes, 2, 2, 616);
+    INIT_VLC_STATIC(&sf_rl_vlc, VLCBITS, HUFF_SCALE_RL_SIZE,
+                    scale_rl_huffbits, 1, 1,
+                    scale_rl_huffcodes, 4, 4, 1406);
+    INIT_VLC_STATIC(&coef_vlc[0], VLCBITS, HUFF_COEF0_SIZE,
+                    coef0_huffbits, 1, 1,
+                    coef0_huffcodes, 4, 4, 2108);
+    INIT_VLC_STATIC(&coef_vlc[1], VLCBITS, HUFF_COEF1_SIZE,
+                    coef1_huffbits, 1, 1,
+                    coef1_huffcodes, 4, 4, 3912);
+    INIT_VLC_STATIC(&vec4_vlc, VLCBITS, HUFF_VEC4_SIZE,
+                    vec4_huffbits, 1, 1,
+                    vec4_huffcodes, 2, 2, 604);
+    INIT_VLC_STATIC(&vec2_vlc, VLCBITS, HUFF_VEC2_SIZE,
+                    vec2_huffbits, 1, 1,
+                    vec2_huffcodes, 2, 2, 562);
+    INIT_VLC_STATIC(&vec1_vlc, VLCBITS, HUFF_VEC1_SIZE,
+                    vec1_huffbits, 1, 1,
+                    vec1_huffcodes, 2, 2, 562);
+
+    /** calculate sine values for the decorrelation matrix */
+    for (int i = 0; i < 33; i++)
+        sin64[i] = sin(i * M_PI / 64.0);
+
+    for (int i = WMAPRO_BLOCK_MIN_BITS; i <= WMAPRO_BLOCK_MAX_BITS; i++)
+        ff_init_ff_sine_windows(i);
+}
+
 /**
  *@brief Initialize the decoder.
  *@param avctx codec context
@@ -313,9 +349,10 @@ static av_cold int get_rate(AVCodecContext *avctx)
  */
 static av_cold int decode_init(WMAProDecodeCtx *s, AVCodecContext *avctx, int num_stream)
 {
+    static AVOnce init_static_once = AV_ONCE_INIT;
     uint8_t *edata_ptr = avctx->extradata;
     unsigned int channel_mask;
-    int i, bits;
+    int i, bits, ret;
     int log2_max_num_subframes;
     int num_possible_block_sizes;
 
@@ -436,7 +473,7 @@ static av_cold int decode_init(WMAProDecodeCtx *s, AVCodecContext *avctx, int nu
         av_log(avctx, AV_LOG_ERROR, "invalid number of channels per XMA stream %d\n",
                s->nb_channels);
         return AVERROR_INVALIDDATA;
-    } else if (s->nb_channels > WMAPRO_MAX_CHANNELS) {
+    } else if (s->nb_channels > WMAPRO_MAX_CHANNELS || s->nb_channels > avctx->channels) {
         avpriv_request_sample(avctx,
                               "More than %d channels", WMAPRO_MAX_CHANNELS);
         return AVERROR_PATCHWELCOME;
@@ -456,34 +493,6 @@ static av_cold int decode_init(WMAProDecodeCtx *s, AVCodecContext *avctx, int nu
                 ++s->lfe_channel;
         }
     }
-
-    INIT_VLC_STATIC(&sf_vlc, SCALEVLCBITS, HUFF_SCALE_SIZE,
-                    scale_huffbits, 1, 1,
-                    scale_huffcodes, 2, 2, 616);
-
-    INIT_VLC_STATIC(&sf_rl_vlc, VLCBITS, HUFF_SCALE_RL_SIZE,
-                    scale_rl_huffbits, 1, 1,
-                    scale_rl_huffcodes, 4, 4, 1406);
-
-    INIT_VLC_STATIC(&coef_vlc[0], VLCBITS, HUFF_COEF0_SIZE,
-                    coef0_huffbits, 1, 1,
-                    coef0_huffcodes, 4, 4, 2108);
-
-    INIT_VLC_STATIC(&coef_vlc[1], VLCBITS, HUFF_COEF1_SIZE,
-                    coef1_huffbits, 1, 1,
-                    coef1_huffcodes, 4, 4, 3912);
-
-    INIT_VLC_STATIC(&vec4_vlc, VLCBITS, HUFF_VEC4_SIZE,
-                    vec4_huffbits, 1, 1,
-                    vec4_huffcodes, 2, 2, 604);
-
-    INIT_VLC_STATIC(&vec2_vlc, VLCBITS, HUFF_VEC2_SIZE,
-                    vec2_huffbits, 1, 1,
-                    vec2_huffcodes, 2, 2, 562);
-
-    INIT_VLC_STATIC(&vec1_vlc, VLCBITS, HUFF_VEC1_SIZE,
-                    vec1_huffbits, 1, 1,
-                    vec1_huffcodes, 2, 2, 562);
 
     /** calculate number of scale factor bands and their offsets
         for every possible block size */
@@ -540,15 +549,17 @@ static av_cold int decode_init(WMAProDecodeCtx *s, AVCodecContext *avctx, int nu
         return AVERROR(ENOMEM);
 
     /** init MDCT, FIXME: only init needed sizes */
-    for (i = 0; i < WMAPRO_BLOCK_SIZES; i++)
-        ff_mdct_init(&s->mdct_ctx[i], WMAPRO_BLOCK_MIN_BITS+1+i, 1,
-                     1.0 / (1 << (WMAPRO_BLOCK_MIN_BITS + i - 1))
-                     / (1 << (s->bits_per_sample - 1)));
+    for (int i = 0; i < WMAPRO_BLOCK_SIZES; i++) {
+        ret = ff_mdct_init(&s->mdct_ctx[i], WMAPRO_BLOCK_MIN_BITS + 1 + i, 1,
+                           1.0 / (1 << (WMAPRO_BLOCK_MIN_BITS + i - 1))
+                           / (1ll << (s->bits_per_sample - 1)));
+        if (ret < 0)
+            return ret;
+    }
 
     /** init MDCT windows: simple sine window */
     for (i = 0; i < WMAPRO_BLOCK_SIZES; i++) {
         const int win_idx = WMAPRO_BLOCK_MAX_BITS - i;
-        ff_init_ff_sine_windows(win_idx);
         s->windows[WMAPRO_BLOCK_SIZES - i - 1] = ff_sine_windows[win_idx];
     }
 
@@ -560,14 +571,12 @@ static av_cold int decode_init(WMAProDecodeCtx *s, AVCodecContext *avctx, int nu
         s->subwoofer_cutoffs[i] = av_clip(cutoff, 4, block_size);
     }
 
-    /** calculate sine values for the decorrelation matrix */
-    for (i = 0; i < 33; i++)
-        sin64[i] = sin(i*M_PI / 64.0);
-
     if (avctx->debug & FF_DEBUG_BITSTREAM)
         dump_context(s);
 
     avctx->channel_layout = channel_mask;
+
+    ff_thread_once(&init_static_once, decode_init_static);
 
     return 0;
 }
@@ -1564,9 +1573,9 @@ static void save_bits(WMAProDecodeCtx *s, GetBitContext* gb, int len,
         s->frame_offset = get_bits_count(gb) & 7;
         s->num_saved_bits = s->frame_offset;
         init_put_bits(&s->pb, s->frame_data, MAX_FRAMESIZE);
-    }
-
-    buflen = (put_bits_count(&s->pb) + len + 8) >> 3;
+        buflen = (s->num_saved_bits      + len + 7) >> 3;
+    } else
+        buflen = (put_bits_count(&s->pb) + len + 7) >> 3;
 
     if (len <= 0 || buflen > MAX_FRAMESIZE) {
         avpriv_request_sample(s->avctx, "Too small input buffer");
@@ -1578,14 +1587,14 @@ static void save_bits(WMAProDecodeCtx *s, GetBitContext* gb, int len,
 
     s->num_saved_bits += len;
     if (!append) {
-        avpriv_copy_bits(&s->pb, gb->buffer + (get_bits_count(gb) >> 3),
+        ff_copy_bits(&s->pb, gb->buffer + (get_bits_count(gb) >> 3),
                      s->num_saved_bits);
     } else {
         int align = 8 - (get_bits_count(gb) & 7);
         align = FFMIN(align, len);
         put_bits(&s->pb, align, get_bits(gb, align));
         len -= align;
-        avpriv_copy_bits(&s->pb, gb->buffer + (get_bits_count(gb) >> 3), len);
+        ff_copy_bits(&s->pb, gb->buffer + (get_bits_count(gb) >> 3), len);
     }
     skip_bits_long(gb, len);
 
@@ -1609,13 +1618,41 @@ static int decode_packet(AVCodecContext *avctx, WMAProDecodeCtx *s,
 
     *got_frame_ptr = 0;
 
-    if (s->packet_done || s->packet_loss) {
+    if (!buf_size) {
+        AVFrame *frame = data;
+        int i;
+
+        /** Must output remaining samples after stream end. WMAPRO 5.1 created
+         * by XWMA encoder don't though (maybe only 1/2ch streams need it). */
+        s->packet_done = 0;
+        if (s->eof_done)
+            return 0;
+
+        /** clean output buffer and copy last IMDCT samples */
+        for (i = 0; i < s->nb_channels; i++) {
+            memset(frame->extended_data[i], 0,
+            s->samples_per_frame * sizeof(*s->channel[i].out));
+
+            memcpy(frame->extended_data[i], s->channel[i].out,
+                   s->samples_per_frame * sizeof(*s->channel[i].out) >> 1);
+        }
+
+        /* TODO: XMA should output 128 samples only (instead of 512) and WMAPRO
+         * maybe 768 (with 2048), XMA needs changes in multi-stream handling though. */
+
+        s->eof_done = 1;
+        s->packet_done = 1;
+        *got_frame_ptr = 1;
+        return 0;
+    }
+    else if (s->packet_done || s->packet_loss) {
         s->packet_done = 0;
 
         /** sanity check for the buffer length */
         if (avctx->codec_id == AV_CODEC_ID_WMAPRO && buf_size < avctx->block_align) {
             av_log(avctx, AV_LOG_ERROR, "Input packet too small (%d < %d)\n",
                    buf_size, avctx->block_align);
+            s->packet_loss = 1;
             return AVERROR_INVALIDDATA;
         }
 
@@ -1690,6 +1727,12 @@ static int decode_packet(AVCodecContext *avctx, WMAProDecodeCtx *s,
         }
     } else {
         int frame_size;
+
+        if (avpkt->size < s->next_packet_start) {
+            s->packet_loss = 1;
+            return AVERROR_INVALIDDATA;
+        }
+
         s->buf_bit_size = (avpkt->size - s->next_packet_start) << 3;
         init_get_bits(gb, avpkt->data, s->buf_bit_size);
         skip_bits(gb, s->packet_offset);
@@ -1765,9 +1808,20 @@ static int xma_decode_packet(AVCodecContext *avctx, void *data,
     AVFrame *frame = data;
     int i, ret, offset = INT_MAX;
 
+    if (!s->frames[s->current_stream]->data[0]) {
+        s->frames[s->current_stream]->nb_samples = 512;
+        if ((ret = ff_get_buffer(avctx, s->frames[s->current_stream], 0)) < 0) {
+            return ret;
+        }
+    }
     /* decode current stream packet */
     ret = decode_packet(avctx, &s->xma[s->current_stream], s->frames[s->current_stream],
                         &got_stream_frame_ptr, avpkt);
+
+    if (got_stream_frame_ptr && s->offset[s->current_stream] >= 64) {
+        got_stream_frame_ptr = 0;
+        ret = AVERROR_INVALIDDATA;
+    }
 
     /* copy stream samples (1/2ch) to sample buffer (Nch) */
     if (got_stream_frame_ptr) {
@@ -1860,12 +1914,14 @@ static av_cold int xma_decode_init(AVCodecContext *avctx)
         s->num_streams = avctx->extradata[1];
         if (avctx->extradata_size != (32 + ((avctx->extradata[0]==3)?0:8) + 4*s->num_streams)) {
             av_log(avctx, AV_LOG_ERROR, "Incorrect XMA2 extradata size\n");
+            s->num_streams = 0;
             return AVERROR(EINVAL);
         }
     } else if (avctx->codec_id == AV_CODEC_ID_XMA1 && avctx->extradata_size >= 4) { /* XMAWAVEFORMAT */
         s->num_streams = avctx->extradata[4];
         if (avctx->extradata_size != (8 + 20*s->num_streams)) {
             av_log(avctx, AV_LOG_ERROR, "Incorrect XMA1 extradata size\n");
+            s->num_streams = 0;
             return AVERROR(EINVAL);
         }
     } else {
@@ -1874,8 +1930,11 @@ static av_cold int xma_decode_init(AVCodecContext *avctx)
     }
 
     /* encoder supports up to 64 streams / 64*2 channels (would have to alloc arrays) */
-    if (avctx->channels > XMA_MAX_CHANNELS || s->num_streams > XMA_MAX_STREAMS) {
+    if (avctx->channels > XMA_MAX_CHANNELS || s->num_streams > XMA_MAX_STREAMS ||
+        s->num_streams <= 0
+    ) {
         avpriv_request_sample(avctx, "More than %d channels in %d streams", XMA_MAX_CHANNELS, s->num_streams);
+        s->num_streams = 0;
         return AVERROR_PATCHWELCOME;
     }
 
@@ -1887,14 +1946,12 @@ static av_cold int xma_decode_init(AVCodecContext *avctx)
         s->frames[i] = av_frame_alloc();
         if (!s->frames[i])
             return AVERROR(ENOMEM);
-        s->frames[i]->nb_samples = 512;
-        if ((ret = ff_get_buffer(avctx, s->frames[i], 0)) < 0) {
-            return AVERROR(ENOMEM);
-        }
 
         s->start_channel[i] = start_channels;
         start_channels += s->xma[i].nb_channels;
     }
+    if (start_channels != avctx->channels)
+        return AVERROR_INVALIDDATA;
 
     return ret;
 }
@@ -1908,6 +1965,7 @@ static av_cold int xma_decode_end(AVCodecContext *avctx)
         decode_end(&s->xma[i]);
         av_frame_free(&s->frames[i]);
     }
+    s->num_streams = 0;
 
     return 0;
 }
@@ -1922,6 +1980,7 @@ static void flush(WMAProDecodeCtx *s)
                sizeof(*s->channel[i].out));
     s->packet_loss = 1;
     s->skip_packets = 0;
+    s->eof_done = 0;
 }
 
 
@@ -1952,7 +2011,7 @@ static void xma_flush(AVCodecContext *avctx)
 /**
  *@brief wmapro decoder
  */
-AVCodec ff_wmapro_decoder = {
+const AVCodec ff_wmapro_decoder = {
     .name           = "wmapro",
     .long_name      = NULL_IF_CONFIG_SMALL("Windows Media Audio 9 Professional"),
     .type           = AVMEDIA_TYPE_AUDIO,
@@ -1965,9 +2024,10 @@ AVCodec ff_wmapro_decoder = {
     .flush          = wmapro_flush,
     .sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_FLTP,
                                                       AV_SAMPLE_FMT_NONE },
+    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP,
 };
 
-AVCodec ff_xma1_decoder = {
+const AVCodec ff_xma1_decoder = {
     .name           = "xma1",
     .long_name      = NULL_IF_CONFIG_SMALL("Xbox Media Audio 1"),
     .type           = AVMEDIA_TYPE_AUDIO,
@@ -1976,12 +2036,13 @@ AVCodec ff_xma1_decoder = {
     .init           = xma_decode_init,
     .close          = xma_decode_end,
     .decode         = xma_decode_packet,
-    .capabilities   = AV_CODEC_CAP_SUBFRAMES | AV_CODEC_CAP_DR1,
+    .capabilities   = AV_CODEC_CAP_SUBFRAMES | AV_CODEC_CAP_DR1 | AV_CODEC_CAP_DELAY,
     .sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_FLTP,
                                                       AV_SAMPLE_FMT_NONE },
+    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP,
 };
 
-AVCodec ff_xma2_decoder = {
+const AVCodec ff_xma2_decoder = {
     .name           = "xma2",
     .long_name      = NULL_IF_CONFIG_SMALL("Xbox Media Audio 2"),
     .type           = AVMEDIA_TYPE_AUDIO,
@@ -1991,7 +2052,8 @@ AVCodec ff_xma2_decoder = {
     .close          = xma_decode_end,
     .decode         = xma_decode_packet,
     .flush          = xma_flush,
-    .capabilities   = AV_CODEC_CAP_SUBFRAMES | AV_CODEC_CAP_DR1,
+    .capabilities   = AV_CODEC_CAP_SUBFRAMES | AV_CODEC_CAP_DR1 | AV_CODEC_CAP_DELAY,
     .sample_fmts    = (const enum AVSampleFormat[]) { AV_SAMPLE_FMT_FLTP,
                                                       AV_SAMPLE_FMT_NONE },
+    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP,
 };

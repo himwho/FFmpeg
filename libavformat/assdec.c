@@ -33,7 +33,7 @@ typedef struct ASSContext {
     unsigned readorder;
 } ASSContext;
 
-static int ass_probe(AVProbeData *p)
+static int ass_probe(const AVProbeData *p)
 {
     char buf[13];
     FFTextReader tr;
@@ -180,9 +180,10 @@ static int ass_read_seek(AVFormatContext *s, int stream_index,
                                    min_ts, ts, max_ts, flags);
 }
 
-AVInputFormat ff_ass_demuxer = {
+const AVInputFormat ff_ass_demuxer = {
     .name           = "ass",
     .long_name      = NULL_IF_CONFIG_SMALL("SSA (SubStation Alpha) subtitle"),
+    .flags_internal = FF_FMT_INIT_CLEANUP,
     .priv_data_size = sizeof(ASSContext),
     .read_probe     = ass_probe,
     .read_header    = ass_read_header,

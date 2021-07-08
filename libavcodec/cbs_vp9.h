@@ -84,7 +84,6 @@ typedef struct VP9RawFrameHeader {
     uint8_t frame_marker;
     uint8_t profile_low_bit;
     uint8_t profile_high_bit;
-    uint8_t profile_reserved_zero;
 
     uint8_t show_existing_frame;
     uint8_t frame_to_show_map_idx;
@@ -99,7 +98,6 @@ typedef struct VP9RawFrameHeader {
     uint8_t color_range;
     uint8_t subsampling_x;
     uint8_t subsampling_y;
-    uint8_t color_config_reserved_zero;
 
     uint8_t refresh_frame_flags;
 
@@ -167,8 +165,8 @@ typedef struct VP9RawFrame {
     VP9RawFrameHeader header;
 
     uint8_t     *data;
-    size_t       data_size;
     AVBufferRef *data_ref;
+    size_t       data_size;
 } VP9RawFrame;
 
 typedef struct VP9RawSuperframeIndex {
@@ -183,8 +181,17 @@ typedef struct VP9RawSuperframe {
     VP9RawSuperframeIndex index;
 } VP9RawSuperframe;
 
+typedef struct VP9ReferenceFrameState {
+    int frame_width;    // RefFrameWidth
+    int frame_height;   // RefFrameHeight
+    int subsampling_x;  // RefSubsamplingX
+    int subsampling_y;  // RefSubsamplingY
+    int bit_depth;      // RefBitDepth
+} VP9ReferenceFrameState;
 
 typedef struct CodedBitstreamVP9Context {
+    int profile;
+
     // Frame dimensions in 8x8 mode info blocks.
     uint16_t mi_cols;
     uint16_t mi_rows;
@@ -192,9 +199,14 @@ typedef struct CodedBitstreamVP9Context {
     uint16_t sb64_cols;
     uint16_t sb64_rows;
 
-    // Write buffer.
-    uint8_t *write_buffer;
-    size_t write_buffer_size;
+    int frame_width;
+    int frame_height;
+
+    uint8_t subsampling_x;
+    uint8_t subsampling_y;
+    int bit_depth;
+
+    VP9ReferenceFrameState ref[VP9_NUM_REF_FRAMES];
 } CodedBitstreamVP9Context;
 
 

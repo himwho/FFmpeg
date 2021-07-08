@@ -25,6 +25,7 @@
 #include "libavutil/opt.h"
 #include "avcodec.h"
 #include "bytestream.h"
+#include "encode.h"
 #include "internal.h"
 #include "libopus.h"
 #include "vorbis.h"
@@ -34,6 +35,7 @@ typedef struct LibopusEncOpts {
     int vbr;
     int application;
     int packet_loss;
+    int fec;
     int complexity;
     float frame_duration;
     int packet_size;
@@ -93,7 +95,7 @@ static void libopus_write_header(AVCodecContext *avctx, int stream_count,
     bytestream_put_buffer(&p, "OpusHead", 8);
     bytestream_put_byte(&p, 1); /* Version */
     bytestream_put_byte(&p, channels);
-    bytestream_put_le16(&p, avctx->initial_padding); /* Lookahead samples at 48kHz */
+    bytestream_put_le16(&p, avctx->initial_padding * 48000 / avctx->sample_rate); /* Lookahead samples at 48kHz */
     bytestream_put_le32(&p, avctx->sample_rate); /* Original sample rate */
     bytestream_put_le16(&p, 0); /* Gain of 0dB is recommended. */
 
@@ -147,6 +149,13 @@ static int libopus_configure_encoder(AVCodecContext *avctx, OpusMSEncoder *enc,
     if (ret != OPUS_OK)
         av_log(avctx, AV_LOG_WARNING,
                "Unable to set expected packet loss percentage: %s\n",
+               opus_strerror(ret));
+
+    ret = opus_multistream_encoder_ctl(enc,
+                                       OPUS_SET_INBAND_FEC(opts->fec));
+    if (ret != OPUS_OK)
+        av_log(avctx, AV_LOG_WARNING,
+               "Unable to set inband FEC: %s\n",
                opus_strerror(ret));
 
     if (avctx->cutoff) {
@@ -271,12 +280,22 @@ static av_cold int libopus_encode_init(AVCodecContext *avctx)
     case 960:
     case 1920:
     case 2880:
+#ifdef OPUS_FRAMESIZE_120_MS
+    case 3840:
+    case 4800:
+    case 5760:
+#endif
         opus->opts.packet_size =
         avctx->frame_size      = frame_size * avctx->sample_rate / 48000;
         break;
     default:
         av_log(avctx, AV_LOG_ERROR, "Invalid frame duration: %g.\n"
-               "Frame duration must be exactly one of: 2.5, 5, 10, 20, 40 or 60.\n",
+               "Frame duration must be exactly one of: 2.5, 5, 10, 20, 40"
+#ifdef OPUS_FRAMESIZE_120_MS
+               ", 60, 80, 100 or 120.\n",
+#else
+               " or 60.\n",
+#endif
                opus->opts.frame_duration);
         return AVERROR(EINVAL);
     }
@@ -414,7 +433,6 @@ static av_cold int libopus_encode_init(AVCodecContext *avctx)
 
 fail:
     opus_multistream_encoder_destroy(enc);
-    av_freep(&avctx->extradata);
     return ret;
 }
 
@@ -463,10 +481,10 @@ static int libopus_encode(AVCodecContext *avctx, AVPacket *avpkt,
         memset(audio, 0, opus->opts.packet_size * sample_size);
     }
 
-    /* Maximum packet size taken from opusenc in opus-tools. 60ms packets
-     * consist of 3 frames in one packet. The maximum frame size is 1275
+    /* Maximum packet size taken from opusenc in opus-tools. 120ms packets
+     * consist of 6 frames in one packet. The maximum frame size is 1275
      * bytes along with the largest possible packet header of 7 bytes. */
-    if ((ret = ff_alloc_packet2(avctx, avpkt, (1275 * 3 + 7) * opus->stream_count, 0)) < 0)
+    if ((ret = ff_alloc_packet(avctx, avpkt, (1275 * 6 + 7) * opus->stream_count)) < 0)
         return ret;
 
     if (avctx->sample_fmt == AV_SAMPLE_FMT_FLT)
@@ -493,7 +511,6 @@ static int libopus_encode(AVCodecContext *avctx, AVPacket *avpkt,
     // Check if subtraction resulted in an overflow
     if ((discard_padding < opus->opts.packet_size) != (avpkt->duration > 0)) {
         av_packet_unref(avpkt);
-        av_free(avpkt);
         return AVERROR(EINVAL);
     }
     if (discard_padding > 0) {
@@ -502,7 +519,6 @@ static int libopus_encode(AVCodecContext *avctx, AVPacket *avpkt,
                                                      10);
         if(!side_data) {
             av_packet_unref(avpkt);
-            av_free(avpkt);
             return AVERROR(ENOMEM);
         }
         AV_WL32(side_data + 4, discard_padding);
@@ -522,7 +538,6 @@ static av_cold int libopus_encode_close(AVCodecContext *avctx)
     ff_af_queue_close(&opus->afq);
 
     av_freep(&opus->samples);
-    av_freep(&avctx->extradata);
 
     return 0;
 }
@@ -534,8 +549,9 @@ static const AVOption libopus_options[] = {
         { "voip",           "Favor improved speech intelligibility",   0, AV_OPT_TYPE_CONST, { .i64 = OPUS_APPLICATION_VOIP },                0, 0, FLAGS, "application" },
         { "audio",          "Favor faithfulness to the input",         0, AV_OPT_TYPE_CONST, { .i64 = OPUS_APPLICATION_AUDIO },               0, 0, FLAGS, "application" },
         { "lowdelay",       "Restrict to only the lowest delay modes", 0, AV_OPT_TYPE_CONST, { .i64 = OPUS_APPLICATION_RESTRICTED_LOWDELAY }, 0, 0, FLAGS, "application" },
-    { "frame_duration", "Duration of a frame in milliseconds", OFFSET(frame_duration), AV_OPT_TYPE_FLOAT, { .dbl = 20.0 }, 2.5, 60.0, FLAGS },
+    { "frame_duration", "Duration of a frame in milliseconds", OFFSET(frame_duration), AV_OPT_TYPE_FLOAT, { .dbl = 20.0 }, 2.5, 120.0, FLAGS },
     { "packet_loss",    "Expected packet loss percentage",     OFFSET(packet_loss),    AV_OPT_TYPE_INT,   { .i64 = 0 },    0,   100,  FLAGS },
+    { "fec",             "Enable inband FEC. Expected packet loss must be non-zero",     OFFSET(fec),    AV_OPT_TYPE_BOOL,   { .i64 = 0 }, 0, 1, FLAGS },
     { "vbr",            "Variable bit rate mode",              OFFSET(vbr),            AV_OPT_TYPE_INT,   { .i64 = 1 },    0,   2,    FLAGS, "vbr" },
         { "off",            "Use constant bit rate", 0, AV_OPT_TYPE_CONST, { .i64 = 0 }, 0, 0, FLAGS, "vbr" },
         { "on",             "Use variable bit rate", 0, AV_OPT_TYPE_CONST, { .i64 = 1 }, 0, 0, FLAGS, "vbr" },
@@ -564,7 +580,7 @@ static const int libopus_sample_rates[] = {
     48000, 24000, 16000, 12000, 8000, 0,
 };
 
-AVCodec ff_libopus_encoder = {
+const AVCodec ff_libopus_encoder = {
     .name            = "libopus",
     .long_name       = NULL_IF_CONFIG_SMALL("libopus Opus"),
     .type            = AVMEDIA_TYPE_AUDIO,

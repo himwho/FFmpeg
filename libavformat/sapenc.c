@@ -60,8 +60,7 @@ static int sap_write_close(AVFormatContext *s)
     }
 
     av_freep(&sap->ann);
-    if (sap->ann_fd)
-        ffurl_close(sap->ann_fd);
+    ffurl_closep(&sap->ann_fd);
     ff_network_close();
     return 0;
 }
@@ -268,7 +267,7 @@ static int sap_write_packet(AVFormatContext *s, AVPacket *pkt)
     return ff_write_chained(rtpctx, 0, pkt, s, 0);
 }
 
-AVOutputFormat ff_sap_muxer = {
+const AVOutputFormat ff_sap_muxer = {
     .name              = "sap",
     .long_name         = NULL_IF_CONFIG_SMALL("SAP output"),
     .priv_data_size    = sizeof(struct SAPState),

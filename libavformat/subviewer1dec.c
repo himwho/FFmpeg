@@ -31,7 +31,7 @@ typedef struct {
     FFDemuxSubtitlesQueue q;
 } SubViewer1Context;
 
-static int subviewer1_probe(AVProbeData *p)
+static int subviewer1_probe(const AVProbeData *p)
 {
     const unsigned char *ptr = p->buf;
 
@@ -111,10 +111,11 @@ static int subviewer1_read_close(AVFormatContext *s)
     return 0;
 }
 
-AVInputFormat ff_subviewer1_demuxer = {
+const AVInputFormat ff_subviewer1_demuxer = {
     .name           = "subviewer1",
     .long_name      = NULL_IF_CONFIG_SMALL("SubViewer v1 subtitle format"),
     .priv_data_size = sizeof(SubViewer1Context),
+    .flags_internal = FF_FMT_INIT_CLEANUP,
     .read_probe     = subviewer1_probe,
     .read_header    = subviewer1_read_header,
     .read_packet    = subviewer1_read_packet,

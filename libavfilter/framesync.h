@@ -211,7 +211,7 @@ typedef struct FFFrameSync {
 /**
  * Get the class for the framesync object.
  */
-const AVClass *framesync_get_class(void);
+const AVClass *ff_framesync_get_class(void);
 
 /**
  * Pre-initialize a frame sync structure.
@@ -297,18 +297,17 @@ int ff_framesync_dualinput_get(FFFrameSync *fs, AVFrame **f0, AVFrame **f1);
  */
 int ff_framesync_dualinput_get_writable(FFFrameSync *fs, AVFrame **f0, AVFrame **f1);
 
+const AVClass *ff_framesync_child_class_iterate(void **iter);
+
 #define FRAMESYNC_DEFINE_CLASS(name, context, field) \
 static int name##_framesync_preinit(AVFilterContext *ctx) { \
     context *s = ctx->priv; \
     ff_framesync_preinit(&s->field); \
     return 0; \
 } \
-static const AVClass *name##_child_class_next(const AVClass *prev) { \
-    return prev ? NULL : framesync_get_class(); \
-} \
 static void *name##_child_next(void *obj, void *prev) { \
     context *s = obj; \
-    s->fs.class = framesync_get_class(); /* FIXME */ \
+    s->fs.class = ff_framesync_get_class(); /* FIXME */ \
     return prev ? NULL : &s->field; \
 } \
 static const AVClass name##_class = { \
@@ -317,7 +316,7 @@ static const AVClass name##_class = { \
     .option           = name##_options, \
     .version          = LIBAVUTIL_VERSION_INT, \
     .category         = AV_CLASS_CATEGORY_FILTER, \
-    .child_class_next = name##_child_class_next, \
+    .child_class_iterate = ff_framesync_child_class_iterate, \
     .child_next       = name##_child_next, \
 }
 

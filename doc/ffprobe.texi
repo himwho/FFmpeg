@@ -335,6 +335,12 @@ Show information about all pixel formats supported by FFmpeg.
 Pixel format information for each format is printed within a section
 with name "PIXEL_FORMAT".
 
+@item -show_optional_fields @var{value}
+Some writers viz. JSON and XML, omit the printing of fields with invalid or non-applicable values,
+while other writers always print them. This option enables one to control this behaviour.
+Valid values are @code{always}/@code{1}, @code{never}/@code{0} and @code{auto}/@code{-1}.
+Default is @var{auto}.
+
 @item -bitexact
 Force bitexact output, useful to produce output which is not dependent
 on the specific build.
@@ -425,7 +431,7 @@ The @code{csv} writer is equivalent to @code{compact}, but supports
 different defaults.
 
 Each section is printed on a single line.
-If no option is specifid, the output has the form:
+If no option is specified, the output has the form:
 @example
 section|key1=val1| ... |keyN=valN
 @end example
@@ -591,7 +597,7 @@ This option automatically sets @option{fully_qualified} to 1.
 @end table
 
 For more information about the XML format, see
-@url{http://www.w3.org/XML/}.
+@url{https://www.w3.org/XML/}.
 @c man end WRITERS
 
 @chapter Timecode
@@ -642,6 +648,7 @@ DV, GXF and AVI timecodes are available in format metadata
 @ifset config-avfilter
 @include filters.texi
 @end ifset
+@include general_contents.texi
 @end ifset
 
 @chapter See Also

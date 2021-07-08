@@ -41,6 +41,7 @@ extern const AVCodecTag ff_mp4_obj_type[];
 extern const AVCodecTag ff_codec_movvideo_tags[];
 extern const AVCodecTag ff_codec_movaudio_tags[];
 extern const AVCodecTag ff_codec_movsubtitle_tags[];
+extern const AVCodecTag ff_codec_movdata_tags[];
 
 int ff_mov_iso639_to_lang(const char lang[4], int mp4);
 int ff_mov_lang_to_iso639(unsigned code, char to[4]);
@@ -86,6 +87,7 @@ typedef struct MOVAtom {
 struct MOVParseTableEntry;
 
 typedef struct MOVFragment {
+    int found_tfhd;
     unsigned track_id;
     uint64_t base_data_offset;
     uint64_t moof_offset;
@@ -118,7 +120,7 @@ typedef struct MOVEncryptionIndex {
     uint8_t* auxiliary_info_sizes;
     size_t auxiliary_info_sample_count;
     uint8_t auxiliary_info_default_size;
-    size_t* auxiliary_offsets;  ///< Absolute seek position
+    uint64_t* auxiliary_offsets;  ///< Absolute seek position
     size_t auxiliary_offsets_count;
 } MOVEncryptionIndex;
 
@@ -127,6 +129,7 @@ typedef struct MOVFragmentStreamInfo {
     int64_t sidx_pts;
     int64_t first_tfra_pts;
     int64_t tfdt_dts;
+    int64_t next_trun_dts;
     int index_entry;
     MOVEncryptionIndex *encryption_index;
 } MOVFragmentStreamInfo;
@@ -161,6 +164,8 @@ typedef struct MOVStreamContext {
     int64_t *chunk_offsets;
     unsigned int stts_count;
     MOVStts *stts_data;
+    unsigned int sdtp_count;
+    uint8_t *sdtp_data;
     unsigned int ctts_count;
     unsigned int ctts_allocated_size;
     MOVStts *ctts_data;
@@ -217,6 +222,7 @@ typedef struct MOVStreamContext {
     int *extradata_size;
     int last_stsd_index;
     int stsd_count;
+    int stsd_version;
 
     int32_t *display_matrix;
     AVStereo3D *stereo3d;
@@ -271,6 +277,7 @@ typedef struct MOVContext {
     int moov_retry;
     int use_mfra_for;
     int has_looked_for_mfra;
+    int use_tfdt;
     MOVFragmentIndex frag_index;
     int atom_depth;
     unsigned int aax_mode;  ///< 'aax' file has been detected
@@ -280,11 +287,17 @@ typedef struct MOVContext {
     int activation_bytes_size;
     void *audible_fixed_key;
     int audible_fixed_key_size;
+    void *audible_key;
+    int audible_key_size;
+    void *audible_iv;
+    int audible_iv_size;
     struct AVAES *aes_decrypt;
     uint8_t *decryption_key;
     int decryption_key_len;
     int enable_drefs;
     int32_t movie_display_matrix[3][3]; ///< display matrix from mvhd
+    int have_read_mfra_size;
+    uint32_t mfra_size;
 } MOVContext;
 
 int ff_mp4_read_descr_len(AVIOContext *pb);

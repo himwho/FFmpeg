@@ -45,6 +45,7 @@
                            AV_PIX_FMT_RGB48, AV_PIX_FMT_RGBA64
 
 #define GRAY_PIXEL_FORMATS AV_PIX_FMT_GRAY8, AV_PIX_FMT_YA8,                  \
+                           AV_PIX_FMT_GRAY10, AV_PIX_FMT_GRAY12, AV_PIX_FMT_GRAY14, \
                            AV_PIX_FMT_GRAY16, AV_PIX_FMT_YA16
 
 #define YUV_PIXEL_FORMATS  AV_PIX_FMT_YUV410P, AV_PIX_FMT_YUV411P, AV_PIX_FMT_YUVA420P, \
@@ -501,7 +502,7 @@ static const AVClass openjpeg_class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-AVCodec ff_libopenjpeg_decoder = {
+const AVCodec ff_libopenjpeg_decoder = {
     .name           = "libopenjpeg",
     .long_name      = NULL_IF_CONFIG_SMALL("OpenJPEG JPEG 2000"),
     .type           = AVMEDIA_TYPE_VIDEO,

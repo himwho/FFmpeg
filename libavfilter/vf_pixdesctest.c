@@ -31,7 +31,7 @@
 
 typedef struct PixdescTestContext {
     const AVPixFmtDescriptor *pix_desc;
-    uint16_t *line;
+    uint32_t *line;
 } PixdescTestContext;
 
 static av_cold void uninit(AVFilterContext *ctx)
@@ -80,8 +80,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     }
 
     /* copy palette */
-    if (priv->pix_desc->flags & AV_PIX_FMT_FLAG_PAL ||
-        ((priv->pix_desc->flags & FF_PSEUDOPAL) && out->data[1] && in->data[1]))
+    if (priv->pix_desc->flags & AV_PIX_FMT_FLAG_PAL)
         memcpy(out->data[1], in->data[1], AVPALETTE_SIZE);
 
     for (c = 0; c < priv->pix_desc->nb_components; c++) {
@@ -89,17 +88,17 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
         const int h1 = c == 1 || c == 2 ? ch : h;
 
         for (i = 0; i < h1; i++) {
-            av_read_image_line(priv->line,
+            av_read_image_line2(priv->line,
                                (void*)in->data,
                                in->linesize,
                                priv->pix_desc,
-                               0, i, c, w1, 0);
+                               0, i, c, w1, 0, 4);
 
-            av_write_image_line(priv->line,
+            av_write_image_line2(priv->line,
                                 out->data,
                                 out->linesize,
                                 priv->pix_desc,
-                                0, i, c, w1);
+                                0, i, c, w1, 4);
         }
     }
 
@@ -125,7 +124,7 @@ static const AVFilterPad avfilter_vf_pixdesctest_outputs[] = {
     { NULL }
 };
 
-AVFilter ff_vf_pixdesctest = {
+const AVFilter ff_vf_pixdesctest = {
     .name        = "pixdesctest",
     .description = NULL_IF_CONFIG_SMALL("Test pixel format definitions."),
     .priv_size   = sizeof(PixdescTestContext),

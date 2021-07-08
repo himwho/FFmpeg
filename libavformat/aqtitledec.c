@@ -37,7 +37,7 @@ typedef struct {
     AVRational frame_rate;
 } AQTitleContext;
 
-static int aqt_probe(AVProbeData *p)
+static int aqt_probe(const AVProbeData *p)
 {
     int frame;
     const char *ptr = p->buf;
@@ -134,10 +134,11 @@ static const AVClass aqt_class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-AVInputFormat ff_aqtitle_demuxer = {
+const AVInputFormat ff_aqtitle_demuxer = {
     .name           = "aqtitle",
     .long_name      = NULL_IF_CONFIG_SMALL("AQTitle subtitles"),
     .priv_data_size = sizeof(AQTitleContext),
+    .flags_internal = FF_FMT_INIT_CLEANUP,
     .read_probe     = aqt_probe,
     .read_header    = aqt_read_header,
     .read_packet    = aqt_read_packet,

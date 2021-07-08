@@ -95,7 +95,11 @@ struct video_data {
     int (*open_f)(const char *file, int oflag, ...);
     int (*close_f)(int fd);
     int (*dup_f)(int fd);
+#ifdef __GLIBC__
     int (*ioctl_f)(int fd, unsigned long int request, ...);
+#else
+    int (*ioctl_f)(int fd, int request, ...);
+#endif
     ssize_t (*read_f)(int fd, void *buffer, size_t n);
     void *(*mmap_f)(void *start, size_t length, int prot, int flags, int fd, int64_t offset);
     int (*munmap_f)(void *_start, size_t length);
@@ -534,11 +538,10 @@ static int mmap_read_frame(AVFormatContext *ctx, AVPacket *pkt)
             s->frame_size = buf.bytesused;
 
         if (s->frame_size > 0 && buf.bytesused != s->frame_size) {
-            av_log(ctx, AV_LOG_ERROR,
+            av_log(ctx, AV_LOG_WARNING,
                    "Dequeued v4l2 buffer contains %d bytes, but %d were expected. Flags: 0x%08X.\n",
                    buf.bytesused, s->frame_size, buf.flags);
-            enqueue_buffer(s, &buf);
-            return AVERROR_INVALIDDATA;
+            buf.bytesused = 0;
         }
     }
 
@@ -808,11 +811,12 @@ static int device_try_init(AVFormatContext *ctx,
     }
 
     *codec_id = ff_fmt_v4l2codec(*desired_format);
-    av_assert0(*codec_id != AV_CODEC_ID_NONE);
+    if (*codec_id == AV_CODEC_ID_NONE)
+        av_assert0(ret == AVERROR(EINVAL));
     return ret;
 }
 
-static int v4l2_read_probe(AVProbeData *p)
+static int v4l2_read_probe(const AVProbeData *p)
 {
     if (av_strstart(p->filename, "/dev/video", NULL))
         return AVPROBE_SCORE_MAX - 1;
@@ -957,7 +961,7 @@ static int v4l2_read_header(AVFormatContext *ctx)
         st->codecpar->codec_tag =
             avcodec_pix_fmt_to_codec_tag(st->codecpar->format);
     else if (codec_id == AV_CODEC_ID_H264) {
-        st->need_parsing = AVSTREAM_PARSE_FULL_ONCE;
+        avpriv_stream_set_need_parsing(st, AVSTREAM_PARSE_FULL_ONCE);
     }
     if (desired_format == V4L2_PIX_FMT_YVU420)
         st->codecpar->codec_tag = MKTAG('Y', 'V', '1', '2');
@@ -977,26 +981,11 @@ fail:
 
 static int v4l2_read_packet(AVFormatContext *ctx, AVPacket *pkt)
 {
-#if FF_API_CODED_FRAME && FF_API_LAVF_AVCTX
-FF_DISABLE_DEPRECATION_WARNINGS
-    struct video_data *s = ctx->priv_data;
-    AVFrame *frame = ctx->streams[0]->codec->coded_frame;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
     int res;
 
     if ((res = mmap_read_frame(ctx, pkt)) < 0) {
         return res;
     }
-
-#if FF_API_CODED_FRAME && FF_API_LAVF_AVCTX
-FF_DISABLE_DEPRECATION_WARNINGS
-    if (frame && s->interlaced) {
-        frame->interlaced_frame = 1;
-        frame->top_field_first = s->top_field_first;
-    }
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
 
     return pkt->size;
 }
@@ -1128,7 +1117,7 @@ static const AVClass v4l2_class = {
     .category   = AV_CLASS_CATEGORY_DEVICE_VIDEO_INPUT,
 };
 
-AVInputFormat ff_v4l2_demuxer = {
+const AVInputFormat ff_v4l2_demuxer = {
     .name           = "video4linux2,v4l2",
     .long_name      = NULL_IF_CONFIG_SMALL("Video4Linux2 device grab"),
     .priv_data_size = sizeof(struct video_data),

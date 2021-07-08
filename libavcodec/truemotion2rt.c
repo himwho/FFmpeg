@@ -116,7 +116,7 @@ static int truemotion2rt_decode_frame(AVCodecContext *avctx, void *data,
     if (ret < 0)
         return ret;
 
-    if (avctx->width / s->hscale * avctx->height * s->delta_size > avpkt->size * 8LL * 4)
+    if ((avctx->width + s->hscale - 1)/ s->hscale * avctx->height * s->delta_size > avpkt->size * 8LL * 4)
         return AVERROR_INVALIDDATA;
 
     ret = init_get_bits8(gb, avpkt->data + ret, avpkt->size - ret);
@@ -220,7 +220,7 @@ static av_cold int truemotion2rt_decode_init(AVCodecContext *avctx)
     return 0;
 }
 
-AVCodec ff_truemotion2rt_decoder = {
+const AVCodec ff_truemotion2rt_decoder = {
     .name           = "truemotion2rt",
     .long_name      = NULL_IF_CONFIG_SMALL("Duck TrueMotion 2.0 Real Time"),
     .type           = AVMEDIA_TYPE_VIDEO,

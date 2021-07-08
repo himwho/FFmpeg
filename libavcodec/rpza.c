@@ -73,13 +73,12 @@ typedef struct RpzaContext {
 static int rpza_decode_stream(RpzaContext *s)
 {
     int width = s->avctx->width;
-    int stride = s->frame->linesize[0] / 2;
-    int row_inc = stride - 4;
+    int stride, row_inc, ret;
     int chunk_size;
     uint16_t colorA = 0, colorB;
     uint16_t color4[4];
     uint16_t ta, tb;
-    uint16_t *pixels = (uint16_t *)s->frame->data[0];
+    uint16_t *pixels;
 
     int row_ptr = 0;
     int pixel_ptr = 0;
@@ -105,6 +104,15 @@ static int rpza_decode_stream(RpzaContext *s)
 
     /* Number of 4x4 blocks in frame. */
     total_blocks = ((s->avctx->width + 3) / 4) * ((s->avctx->height + 3) / 4);
+
+    if (total_blocks / 32 > bytestream2_get_bytes_left(&s->gb))
+        return AVERROR_INVALIDDATA;
+
+    if ((ret = ff_reget_buffer(s->avctx, s->frame, 0)) < 0)
+        return ret;
+    pixels = (uint16_t *)s->frame->data[0];
+    stride = s->frame->linesize[0] / 2;
+    row_inc = stride - 4;
 
     /* Process chunk data */
     while (bytestream2_get_bytes_left(&s->gb)) {
@@ -256,9 +264,6 @@ static int rpza_decode_frame(AVCodecContext *avctx,
 
     bytestream2_init(&s->gb, avpkt->data, avpkt->size);
 
-    if ((ret = ff_reget_buffer(avctx, s->frame)) < 0)
-        return ret;
-
     ret = rpza_decode_stream(s);
     if (ret < 0)
         return ret;
@@ -281,7 +286,7 @@ static av_cold int rpza_decode_end(AVCodecContext *avctx)
     return 0;
 }
 
-AVCodec ff_rpza_decoder = {
+const AVCodec ff_rpza_decoder = {
     .name           = "rpza",
     .long_name      = NULL_IF_CONFIG_SMALL("QuickTime video (RPZA)"),
     .type           = AVMEDIA_TYPE_VIDEO,
@@ -291,4 +296,5 @@ AVCodec ff_rpza_decoder = {
     .close          = rpza_decode_end,
     .decode         = rpza_decode_frame,
     .capabilities   = AV_CODEC_CAP_DR1,
+    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE,
 };

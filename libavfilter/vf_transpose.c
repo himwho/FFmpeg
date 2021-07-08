@@ -38,27 +38,7 @@
 #include "formats.h"
 #include "internal.h"
 #include "video.h"
-
-typedef enum {
-    TRANSPOSE_PT_TYPE_NONE,
-    TRANSPOSE_PT_TYPE_LANDSCAPE,
-    TRANSPOSE_PT_TYPE_PORTRAIT,
-} PassthroughType;
-
-enum TransposeDir {
-    TRANSPOSE_CCLOCK_FLIP,
-    TRANSPOSE_CLOCK,
-    TRANSPOSE_CCLOCK,
-    TRANSPOSE_CLOCK_FLIP,
-};
-
-typedef struct TransVtable {
-    void (*transpose_8x8)(uint8_t *src, ptrdiff_t src_linesize,
-                          uint8_t *dst, ptrdiff_t dst_linesize);
-    void (*transpose_block)(uint8_t *src, ptrdiff_t src_linesize,
-                            uint8_t *dst, ptrdiff_t dst_linesize,
-                            int w, int h);
-} TransVtable;
+#include "transpose.h"
 
 typedef struct TransContext {
     const AVClass *class;
@@ -255,6 +235,14 @@ static int config_props_output(AVFilterLink *outlink)
         }
     }
 
+    if (ARCH_X86) {
+        for (int i = 0; i < 4; i++) {
+            TransVtable *v = &s->vtables[i];
+
+            ff_transpose_init_x86(v, s->pixsteps[i]);
+        }
+    }
+
     av_log(ctx, AV_LOG_VERBOSE,
            "w:%d h:%d dir:%d -> w:%d h:%d rotation:%s vflip:%d\n",
            inlink->w, inlink->h, s->dir, outlink->w, outlink->h,
@@ -409,7 +397,7 @@ static const AVFilterPad avfilter_vf_transpose_outputs[] = {
     { NULL }
 };
 
-AVFilter ff_vf_transpose = {
+const AVFilter ff_vf_transpose = {
     .name          = "transpose",
     .description   = NULL_IF_CONFIG_SMALL("Transpose input video."),
     .priv_size     = sizeof(TransContext),

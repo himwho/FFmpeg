@@ -25,7 +25,7 @@
 #include "internal.h"
 #include "pcm.h"
 
-static int nsp_probe(AVProbeData *p)
+static int nsp_probe(const AVProbeData *p)
 {
     if (AV_RB32(p->buf) == AV_RB32("FORM") &&
         AV_RB32(p->buf + 4) == AV_RB32("DS16"))
@@ -96,7 +96,7 @@ static int nsp_read_header(AVFormatContext *s)
     return 0;
 }
 
-AVInputFormat ff_nsp_demuxer = {
+const AVInputFormat ff_nsp_demuxer = {
     .name           = "nsp",
     .long_name      = NULL_IF_CONFIG_SMALL("Computerized Speech Lab NSP"),
     .read_probe     = nsp_probe,

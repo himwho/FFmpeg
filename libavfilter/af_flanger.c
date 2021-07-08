@@ -72,7 +72,7 @@ static const AVOption flanger_options[] = {
 
 AVFILTER_DEFINE_CLASS(flanger);
 
-static int init(AVFilterContext *ctx)
+static av_cold int init(AVFilterContext *ctx)
 {
     FlangerContext *s = ctx->priv;
 
@@ -233,7 +233,7 @@ static const AVFilterPad flanger_outputs[] = {
     { NULL }
 };
 
-AVFilter ff_af_flanger = {
+const AVFilter ff_af_flanger = {
     .name          = "flanger",
     .description   = NULL_IF_CONFIG_SMALL("Apply a flanging effect to the audio."),
     .query_formats = query_formats,

@@ -21,6 +21,7 @@
 *.version
 *.ptx
 *.ptx.c
+*.ptx.gz
 *_g
 \#*
 .\#*
@@ -36,3 +37,4 @@
 /lcov/
 /src
 /mapfile
+/tools/python/__pycache__/

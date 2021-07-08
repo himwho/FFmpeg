@@ -34,7 +34,7 @@ typedef struct {
     FFDemuxSubtitlesQueue q;
 } STLContext;
 
-static int stl_probe(AVProbeData *p)
+static int stl_probe(const AVProbeData *p)
 {
     char c;
     const unsigned char *ptr = p->buf;
@@ -128,10 +128,11 @@ static int stl_read_close(AVFormatContext *s)
     return 0;
 }
 
-AVInputFormat ff_stl_demuxer = {
+const AVInputFormat ff_stl_demuxer = {
     .name           = "stl",
     .long_name      = NULL_IF_CONFIG_SMALL("Spruce subtitle format"),
     .priv_data_size = sizeof(STLContext),
+    .flags_internal = FF_FMT_INIT_CLEANUP,
     .read_probe     = stl_probe,
     .read_header    = stl_read_header,
     .read_packet    = stl_read_packet,

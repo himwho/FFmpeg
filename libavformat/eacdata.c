@@ -36,7 +36,7 @@ typedef struct CdataDemuxContext {
   unsigned int audio_pts;
 } CdataDemuxContext;
 
-static int cdata_probe(AVProbeData *p)
+static int cdata_probe(const AVProbeData *p)
 {
     const uint8_t *b = p->buf;
 
@@ -94,7 +94,7 @@ static int cdata_read_packet(AVFormatContext *s, AVPacket *pkt)
     return 0;
 }
 
-AVInputFormat ff_ea_cdata_demuxer = {
+const AVInputFormat ff_ea_cdata_demuxer = {
     .name           = "ea_cdata",
     .long_name      = NULL_IF_CONFIG_SMALL("Electronic Arts cdata"),
     .priv_data_size = sizeof(CdataDemuxContext),

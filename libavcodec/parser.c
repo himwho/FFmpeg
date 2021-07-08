@@ -27,94 +27,9 @@
 #include "libavutil/avassert.h"
 #include "libavutil/internal.h"
 #include "libavutil/mem.h"
-#include "libavutil/thread.h"
 
 #include "internal.h"
 #include "parser.h"
-
-/* Parsers */
-extern AVCodecParser ff_aac_parser;
-extern AVCodecParser ff_aac_latm_parser;
-extern AVCodecParser ff_ac3_parser;
-extern AVCodecParser ff_adx_parser;
-extern AVCodecParser ff_bmp_parser;
-extern AVCodecParser ff_cavsvideo_parser;
-extern AVCodecParser ff_cook_parser;
-extern AVCodecParser ff_dca_parser;
-extern AVCodecParser ff_dirac_parser;
-extern AVCodecParser ff_dnxhd_parser;
-extern AVCodecParser ff_dpx_parser;
-extern AVCodecParser ff_dvaudio_parser;
-extern AVCodecParser ff_dvbsub_parser;
-extern AVCodecParser ff_dvdsub_parser;
-extern AVCodecParser ff_dvd_nav_parser;
-extern AVCodecParser ff_flac_parser;
-extern AVCodecParser ff_g729_parser;
-extern AVCodecParser ff_gsm_parser;
-extern AVCodecParser ff_h261_parser;
-extern AVCodecParser ff_h263_parser;
-extern AVCodecParser ff_h264_parser;
-extern AVCodecParser ff_hevc_parser;
-extern AVCodecParser ff_mjpeg_parser;
-extern AVCodecParser ff_mlp_parser;
-extern AVCodecParser ff_mpeg4video_parser;
-extern AVCodecParser ff_mpegaudio_parser;
-extern AVCodecParser ff_mpegvideo_parser;
-extern AVCodecParser ff_opus_parser;
-extern AVCodecParser ff_png_parser;
-extern AVCodecParser ff_pnm_parser;
-extern AVCodecParser ff_rv30_parser;
-extern AVCodecParser ff_rv40_parser;
-extern AVCodecParser ff_sbc_parser;
-extern AVCodecParser ff_sipr_parser;
-extern AVCodecParser ff_tak_parser;
-extern AVCodecParser ff_vc1_parser;
-extern AVCodecParser ff_vorbis_parser;
-extern AVCodecParser ff_vp3_parser;
-extern AVCodecParser ff_vp8_parser;
-extern AVCodecParser ff_vp9_parser;
-extern AVCodecParser ff_xma_parser;
-
-#include "libavcodec/parser_list.c"
-
-static AVOnce av_parser_next_init = AV_ONCE_INIT;
-
-static void av_parser_init_next(void)
-{
-    AVCodecParser *prev = NULL, *p;
-    int i = 0;
-    while ((p = (AVCodecParser*)parser_list[i++])) {
-        if (prev)
-            prev->next = p;
-        prev = p;
-    }
-}
-
-AVCodecParser *av_parser_next(const AVCodecParser *p)
-{
-    ff_thread_once(&av_parser_next_init, av_parser_init_next);
-
-    if (p)
-        return p->next;
-    else
-        return (AVCodecParser*)parser_list[0];
-}
-
-const AVCodecParser *av_parser_iterate(void **opaque)
-{
-    uintptr_t i = (uintptr_t)*opaque;
-    const AVCodecParser *p = parser_list[i];
-
-    if (p)
-        *opaque = (void*)(i + 1);
-
-    return p;
-}
-
-void av_register_codec_parser(AVCodecParser *parser)
-{
-    ff_thread_once(&av_parser_next_init, av_parser_init_next);
-}
 
 AVCodecParserContext *av_parser_init(int codec_id)
 {
@@ -140,7 +55,7 @@ found:
     s = av_mallocz(sizeof(AVCodecParserContext));
     if (!s)
         goto err_out;
-    s->parser = (AVCodecParser*)parser;
+    s->parser = parser;
     s->priv_data = av_mallocz(parser->priv_data_size);
     if (!s->priv_data)
         goto err_out;
@@ -152,11 +67,6 @@ found:
             goto err_out;
     }
     s->key_frame            = -1;
-#if FF_API_CONVERGENCE_DURATION
-FF_DISABLE_DEPRECATION_WARNINGS
-    s->convergence_duration = 0;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
     s->dts_sync_point       = INT_MIN;
     s->dts_ref_dts_delta    = INT_MIN;
     s->pts_dts_delta        = INT_MIN;
@@ -264,46 +174,14 @@ int av_parser_parse2(AVCodecParserContext *s, AVCodecContext *avctx,
         /* offset of the next frame */
         s->next_frame_offset = s->cur_offset + index;
         s->fetch_timestamp   = 1;
+    } else {
+        /* Don't return a pointer to dummy_buf. */
+        *poutbuf = NULL;
     }
     if (index < 0)
         index = 0;
     s->cur_offset += index;
     return index;
-}
-
-int av_parser_change(AVCodecParserContext *s, AVCodecContext *avctx,
-                     uint8_t **poutbuf, int *poutbuf_size,
-                     const uint8_t *buf, int buf_size, int keyframe)
-{
-    if (s && s->parser->split) {
-        if (avctx->flags  & AV_CODEC_FLAG_GLOBAL_HEADER ||
-            avctx->flags2 & AV_CODEC_FLAG2_LOCAL_HEADER) {
-            int i = s->parser->split(avctx, buf, buf_size);
-            buf      += i;
-            buf_size -= i;
-        }
-    }
-
-    /* cast to avoid warning about discarding qualifiers */
-    *poutbuf      = (uint8_t *) buf;
-    *poutbuf_size = buf_size;
-    if (avctx->extradata) {
-        if (keyframe && (avctx->flags2 & AV_CODEC_FLAG2_LOCAL_HEADER)) {
-            int size = buf_size + avctx->extradata_size;
-
-            *poutbuf_size = size;
-            *poutbuf      = av_malloc(size + AV_INPUT_BUFFER_PADDING_SIZE);
-            if (!*poutbuf)
-                return AVERROR(ENOMEM);
-
-            memcpy(*poutbuf, avctx->extradata, avctx->extradata_size);
-            memcpy(*poutbuf + avctx->extradata_size, buf,
-                   buf_size + AV_INPUT_BUFFER_PADDING_SIZE);
-            return 1;
-        }
-    }
-
-    return 0;
 }
 
 void av_parser_close(AVCodecParserContext *s)
@@ -329,6 +207,9 @@ int ff_combine_frame(ParseContext *pc, int next,
     /* Copy overread bytes from last frame into buffer. */
     for (; pc->overread > 0; pc->overread--)
         pc->buffer[pc->index++] = pc->buffer[pc->overread_index++];
+
+    if (next > *buf_size)
+        return AVERROR(EINVAL);
 
     /* flush remaining if EOF */
     if (!*buf_size && next == END_NOT_FOUND)
@@ -377,6 +258,10 @@ int ff_combine_frame(ParseContext *pc, int next,
         *buf      = pc->buffer;
     }
 
+    if (next < -8) {
+        pc->overread += -8 - next;
+        next = -8;
+    }
     /* store overread bytes */
     for (; next < 0; next++) {
         pc->state   = pc->state   << 8 | pc->buffer[pc->last_index + next];
@@ -399,18 +284,4 @@ void ff_parse_close(AVCodecParserContext *s)
     ParseContext *pc = s->priv_data;
 
     av_freep(&pc->buffer);
-}
-
-int ff_mpeg4video_split(AVCodecContext *avctx, const uint8_t *buf, int buf_size)
-{
-    uint32_t state = -1;
-    const uint8_t *ptr = buf, *end = buf + buf_size;
-
-    while (ptr < end) {
-        ptr = avpriv_find_start_code(ptr, end, &state);
-        if (state == 0x1B3 || state == 0x1B6)
-            return ptr - 4 - buf;
-    }
-
-    return 0;
 }

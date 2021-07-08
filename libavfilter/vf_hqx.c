@@ -523,7 +523,7 @@ static av_cold int init(AVFilterContext *ctx)
             int startg = FFMAX3(-bg, -rg, 0);
             int endg = FFMIN3(255-bg, 255-rg, 255);
             uint32_t y = (uint32_t)(( 299*rg + 1000*startg + 114*bg)/1000);
-            c = bg + (rg<<16) + 0x010101 * startg;
+            c = bg + rg * (1 << 16) + 0x010101 * startg;
             for (g = startg; g <= endg; g++) {
                 hqx->rgbtoyuv[c] = ((y++) << 16) + (u << 8) + v;
                 c+= 0x010101;
@@ -553,7 +553,7 @@ static const AVFilterPad hqx_outputs[] = {
     { NULL }
 };
 
-AVFilter ff_vf_hqx = {
+const AVFilter ff_vf_hqx = {
     .name          = "hqx",
     .description   = NULL_IF_CONFIG_SMALL("Scale the input by 2, 3 or 4 using the hq*x magnification algorithm."),
     .priv_size     = sizeof(HQXContext),

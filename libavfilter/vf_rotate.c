@@ -94,16 +94,17 @@ typedef struct ThreadData {
 
 #define OFFSET(x) offsetof(RotContext, x)
 #define FLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM
+#define TFLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_RUNTIME_PARAM
 
 static const AVOption rotate_options[] = {
-    { "angle",     "set angle (in radians)",       OFFSET(angle_expr_str), AV_OPT_TYPE_STRING, {.str="0"}, CHAR_MIN, CHAR_MAX, .flags=FLAGS },
-    { "a",         "set angle (in radians)",       OFFSET(angle_expr_str), AV_OPT_TYPE_STRING, {.str="0"}, CHAR_MIN, CHAR_MAX, .flags=FLAGS },
-    { "out_w",     "set output width expression",  OFFSET(outw_expr_str), AV_OPT_TYPE_STRING, {.str="iw"}, CHAR_MIN, CHAR_MAX, .flags=FLAGS },
-    { "ow",        "set output width expression",  OFFSET(outw_expr_str), AV_OPT_TYPE_STRING, {.str="iw"}, CHAR_MIN, CHAR_MAX, .flags=FLAGS },
-    { "out_h",     "set output height expression", OFFSET(outh_expr_str), AV_OPT_TYPE_STRING, {.str="ih"}, CHAR_MIN, CHAR_MAX, .flags=FLAGS },
-    { "oh",        "set output height expression", OFFSET(outh_expr_str), AV_OPT_TYPE_STRING, {.str="ih"}, CHAR_MIN, CHAR_MAX, .flags=FLAGS },
-    { "fillcolor", "set background fill color",    OFFSET(fillcolor_str), AV_OPT_TYPE_STRING, {.str="black"}, CHAR_MIN, CHAR_MAX, .flags=FLAGS },
-    { "c",         "set background fill color",    OFFSET(fillcolor_str), AV_OPT_TYPE_STRING, {.str="black"}, CHAR_MIN, CHAR_MAX, .flags=FLAGS },
+    { "angle",     "set angle (in radians)",       OFFSET(angle_expr_str), AV_OPT_TYPE_STRING, {.str="0"}, 0, 0, .flags=TFLAGS },
+    { "a",         "set angle (in radians)",       OFFSET(angle_expr_str), AV_OPT_TYPE_STRING, {.str="0"}, 0, 0, .flags=TFLAGS },
+    { "out_w",     "set output width expression",  OFFSET(outw_expr_str), AV_OPT_TYPE_STRING, {.str="iw"}, 0, 0, .flags=FLAGS },
+    { "ow",        "set output width expression",  OFFSET(outw_expr_str), AV_OPT_TYPE_STRING, {.str="iw"}, 0, 0, .flags=FLAGS },
+    { "out_h",     "set output height expression", OFFSET(outh_expr_str), AV_OPT_TYPE_STRING, {.str="ih"}, 0, 0, .flags=FLAGS },
+    { "oh",        "set output height expression", OFFSET(outh_expr_str), AV_OPT_TYPE_STRING, {.str="ih"}, 0, 0, .flags=FLAGS },
+    { "fillcolor", "set background fill color",    OFFSET(fillcolor_str), AV_OPT_TYPE_STRING, {.str="black"}, 0, 0, .flags=FLAGS },
+    { "c",         "set background fill color",    OFFSET(fillcolor_str), AV_OPT_TYPE_STRING, {.str="black"}, 0, 0, .flags=FLAGS },
     { "bilinear",  "use bilinear interpolation",   OFFSET(use_bilinear),  AV_OPT_TYPE_BOOL, {.i64=1}, 0, 1, .flags=FLAGS },
     { NULL }
 };
@@ -414,8 +415,6 @@ static av_always_inline void simple_rotate(uint8_t *dst, const uint8_t *src, int
     }
 }
 
-#define TS2T(ts, tb) ((ts) == AV_NOPTS_VALUE ? NAN : (double)(ts)*av_q2d(tb))
-
 static int filter_slice(AVFilterContext *ctx, void *arg, int job, int nb_jobs)
 {
     ThreadData *td = arg;
@@ -601,7 +600,7 @@ static const AVFilterPad rotate_outputs[] = {
     { NULL }
 };
 
-AVFilter ff_vf_rotate = {
+const AVFilter ff_vf_rotate = {
     .name          = "rotate",
     .description   = NULL_IF_CONFIG_SMALL("Rotate the input image."),
     .priv_size     = sizeof(RotContext),

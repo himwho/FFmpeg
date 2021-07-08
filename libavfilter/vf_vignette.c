@@ -155,9 +155,6 @@ static double get_natural_factor(const VignetteContext *s, int x, int y)
     }
 }
 
-#define TS2D(ts)     ((ts) == AV_NOPTS_VALUE ? NAN : (double)(ts))
-#define TS2T(ts, tb) ((ts) == AV_NOPTS_VALUE ? NAN : (double)(ts) * av_q2d(tb))
-
 static void update_context(VignetteContext *s, AVFilterLink *inlink, AVFrame *frame)
 {
     int x, y;
@@ -345,7 +342,7 @@ static const AVFilterPad vignette_outputs[] = {
     { NULL }
 };
 
-AVFilter ff_vf_vignette = {
+const AVFilter ff_vf_vignette = {
     .name          = "vignette",
     .description   = NULL_IF_CONFIG_SMALL("Make or reverse a vignette effect."),
     .priv_size     = sizeof(VignetteContext),

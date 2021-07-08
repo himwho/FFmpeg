@@ -31,11 +31,12 @@
 #include "rawdec.h"
 
 typedef struct TAKDemuxContext {
+    FFRawDemuxerContext rawctx;
     int     mlast_frame;
     int64_t data_end;
 } TAKDemuxContext;
 
-static int tak_probe(AVProbeData *p)
+static int tak_probe(const AVProbeData *p)
 {
     if (!memcmp(p->buf, "tBaK", 4))
         return AVPROBE_SCORE_EXTENSION;
@@ -63,7 +64,7 @@ static int tak_read_header(AVFormatContext *s)
 
     st->codecpar->codec_type = AVMEDIA_TYPE_AUDIO;
     st->codecpar->codec_id   = AV_CODEC_ID_TAK;
-    st->need_parsing         = AVSTREAM_PARSE_FULL_RAW;
+    st->internal->need_parsing         = AVSTREAM_PARSE_FULL_RAW;
 
     tc->mlast_frame = 0;
     if (avio_rl32(pb) != MKTAG('t', 'B', 'a', 'K')) {
@@ -80,6 +81,8 @@ static int tak_read_header(AVFormatContext *s)
 
         switch (type) {
         case TAK_METADATA_STREAMINFO:
+            if (st->codecpar->extradata)
+                return AVERROR_INVALIDDATA;
         case TAK_METADATA_LAST_FRAME:
         case TAK_METADATA_ENCODER:
             if (size <= 3)
@@ -146,7 +149,7 @@ static int tak_read_header(AVFormatContext *s)
 
             ret = avpriv_tak_parse_streaminfo(&ti, buffer, size -3);
             if (ret < 0)
-                return AVERROR_INVALIDDATA;
+                goto end;
             if (ti.samples > 0)
                 st->duration = ti.samples;
             st->codecpar->bits_per_coded_sample = ti.bps;
@@ -160,8 +163,10 @@ static int tak_read_header(AVFormatContext *s)
             st->codecpar->extradata_size        = size - 3;
             buffer                           = NULL;
         } else if (type == TAK_METADATA_LAST_FRAME) {
-            if (size != 11)
-                return AVERROR_INVALIDDATA;
+            if (size != 11) {
+                ret = AVERROR_INVALIDDATA;
+                goto end;
+            }
             init_get_bits8(&gb, buffer, size - 3);
             tc->mlast_frame = 1;
             tc->data_end    = get_bits64(&gb, TAK_LAST_FRAME_POS_BITS) +
@@ -176,6 +181,9 @@ static int tak_read_header(AVFormatContext *s)
     }
 
     return AVERROR_EOF;
+end:
+    av_freep(&buffer);
+    return ret;
 }
 
 static int raw_read_packet(AVFormatContext *s, AVPacket *pkt)
@@ -204,7 +212,7 @@ static int raw_read_packet(AVFormatContext *s, AVPacket *pkt)
     return ret;
 }
 
-AVInputFormat ff_tak_demuxer = {
+const AVInputFormat ff_tak_demuxer = {
     .name           = "tak",
     .long_name      = NULL_IF_CONFIG_SMALL("raw TAK"),
     .priv_data_size = sizeof(TAKDemuxContext),
@@ -214,4 +222,5 @@ AVInputFormat ff_tak_demuxer = {
     .flags          = AVFMT_GENERIC_INDEX,
     .extensions     = "tak",
     .raw_codec_id   = AV_CODEC_ID_TAK,
+    .priv_class     = &ff_raw_demuxer_class,
 };

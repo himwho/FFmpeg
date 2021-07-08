@@ -437,7 +437,7 @@ static void guess_mv(ERContext *s)
     }
 
     if ((!(s->avctx->error_concealment&FF_EC_GUESS_MVS)) ||
-        num_avail <= mb_width / 2) {
+        num_avail <= FFMAX(mb_width, mb_height) / 2) {
         for (mb_y = 0; mb_y < mb_height; mb_y++) {
             for (mb_x = 0; mb_x < s->mb_width; mb_x++) {
                 const int mb_xy = mb_x + mb_y * s->mb_stride;
@@ -814,8 +814,7 @@ static int er_supported(ERContext *s)
 {
     if(s->avctx->hwaccel && s->avctx->hwaccel->decode_slice           ||
        !s->cur_pic.f                                                  ||
-       s->cur_pic.field_picture                                       ||
-       s->avctx->profile == FF_PROFILE_MPEG4_SIMPLE_STUDIO
+       s->cur_pic.field_picture
     )
         return 0;
     return 1;
@@ -918,19 +917,20 @@ void ff_er_frame_end(ERContext *s)
         return;
     }
     linesize = s->cur_pic.f->linesize;
-    for (mb_x = 0; mb_x < s->mb_width; mb_x++) {
-        int status = s->error_status_table[mb_x + (s->mb_height - 1) * s->mb_stride];
-        if (status != 0x7F)
-            break;
-    }
 
-    if (   mb_x == s->mb_width
-        && s->avctx->codec_id == AV_CODEC_ID_MPEG2VIDEO
+    if (   s->avctx->codec_id == AV_CODEC_ID_MPEG2VIDEO
         && (FFALIGN(s->avctx->height, 16)&16)
-        && atomic_load(&s->error_count) == 3 * s->mb_width * (s->avctx->skip_top + s->avctx->skip_bottom + 1)
-    ) {
-        av_log(s->avctx, AV_LOG_DEBUG, "ignoring last missing slice\n");
-        return;
+        && atomic_load(&s->error_count) == 3 * s->mb_width * (s->avctx->skip_top + s->avctx->skip_bottom + 1)) {
+        for (mb_x = 0; mb_x < s->mb_width; mb_x++) {
+            int status = s->error_status_table[mb_x + (s->mb_height - 1) * s->mb_stride];
+            if (status != 0x7F)
+                break;
+        }
+
+        if (mb_x == s->mb_width) {
+            av_log(s->avctx, AV_LOG_DEBUG, "ignoring last missing slice\n");
+            return;
+        }
     }
 
     if (s->last_pic.f) {
@@ -1121,6 +1121,8 @@ void ff_er_frame_end(ERContext *s)
     }
     av_log(s->avctx, AV_LOG_INFO, "concealing %d DC, %d AC, %d MV errors in %c frame\n",
            dc_error, ac_error, mv_error, av_get_picture_type_char(s->cur_pic.f->pict_type));
+
+    s->cur_pic.f->decode_error_flags |= FF_DECODE_ERROR_CONCEALMENT_ACTIVE;
 
     is_intra_likely = is_intra_more_likely(s);
 

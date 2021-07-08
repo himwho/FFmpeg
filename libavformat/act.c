@@ -33,7 +33,7 @@ typedef struct{
     char second_packet;      ///< 1 - if temporary buffer contains valid (second) G.729 packet
 } ACTContext;
 
-static int probe(AVProbeData *p)
+static int probe(const AVProbeData *p)
 {
     int i;
 
@@ -197,7 +197,7 @@ static int read_packet(AVFormatContext *s,
     return ret;
 }
 
-AVInputFormat ff_act_demuxer = {
+const AVInputFormat ff_act_demuxer = {
     .name           = "act",
     .long_name      = "ACT Voice file format",
     .priv_data_size = sizeof(ACTContext),

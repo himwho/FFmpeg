@@ -31,7 +31,7 @@ typedef struct {
     FFDemuxSubtitlesQueue q;
 } VPlayerContext;
 
-static int vplayer_probe(AVProbeData *p)
+static int vplayer_probe(const AVProbeData *p)
 {
     char c;
     const unsigned char *ptr = p->buf;
@@ -116,10 +116,11 @@ static int vplayer_read_close(AVFormatContext *s)
     return 0;
 }
 
-AVInputFormat ff_vplayer_demuxer = {
+const AVInputFormat ff_vplayer_demuxer = {
     .name           = "vplayer",
     .long_name      = NULL_IF_CONFIG_SMALL("VPlayer subtitles"),
     .priv_data_size = sizeof(VPlayerContext),
+    .flags_internal = FF_FMT_INIT_CLEANUP,
     .read_probe     = vplayer_probe,
     .read_header    = vplayer_read_header,
     .read_packet    = vplayer_read_packet,

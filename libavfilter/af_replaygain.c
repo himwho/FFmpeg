@@ -551,7 +551,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     AVFilterContext *ctx = inlink->dst;
     AVFilterLink *outlink = ctx->outputs[0];
     ReplayGainContext *s = ctx->priv;
-    uint32_t level;
+    int64_t level;
     AVFrame *out;
 
     out = ff_get_audio_buffer(outlink, in->nb_samples);
@@ -567,9 +567,9 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
                                                  out->nb_samples);
     butter_filter_stereo_samples(s, (float *)out->data[0],
                                              out->nb_samples);
-    level = (uint32_t)floor(100 * calc_stereo_rms((float *)out->data[0],
-                                                           out->nb_samples));
-    level = av_clip(level, 0, HISTOGRAM_SLOTS - 1);
+    level = lrint(floor(100 * calc_stereo_rms((float *)out->data[0],
+                                                           out->nb_samples)));
+    level = av_clip64(level, 0, HISTOGRAM_SLOTS - 1);
 
     s->histogram[level]++;
 
@@ -604,7 +604,7 @@ static const AVFilterPad replaygain_outputs[] = {
     { NULL }
 };
 
-AVFilter ff_af_replaygain = {
+const AVFilter ff_af_replaygain = {
     .name          = "replaygain",
     .description   = NULL_IF_CONFIG_SMALL("ReplayGain scanner."),
     .query_formats = query_formats,

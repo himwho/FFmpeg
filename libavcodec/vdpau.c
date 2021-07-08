@@ -83,6 +83,8 @@ int av_vdpau_get_surface_parameters(AVCodecContext *avctx,
     switch (avctx->sw_pix_fmt) {
     case AV_PIX_FMT_YUV420P:
     case AV_PIX_FMT_YUVJ420P:
+    case AV_PIX_FMT_YUV420P10:
+    case AV_PIX_FMT_YUV420P12:
         t = VDP_CHROMA_TYPE_420;
         w = (w + 1) & ~1;
         h = (h + 3) & ~3;
@@ -95,6 +97,8 @@ int av_vdpau_get_surface_parameters(AVCodecContext *avctx,
         break;
     case AV_PIX_FMT_YUV444P:
     case AV_PIX_FMT_YUVJ444P:
+    case AV_PIX_FMT_YUV444P10:
+    case AV_PIX_FMT_YUV444P12:
         t = VDP_CHROMA_TYPE_444;
         h = (h + 1) & ~1;
         break;
@@ -208,8 +212,12 @@ int ff_vdpau_common_init(AVCodecContext *avctx, VdpDecoderProfile profile,
         return vdpau_error(status);
     if (avctx->codec_id == AV_CODEC_ID_HEVC && strncmp(info_string, "NVIDIA ", 7) == 0 &&
         !(avctx->hwaccel_flags & AV_HWACCEL_FLAG_ALLOW_PROFILE_MISMATCH)) {
-        av_log(avctx, AV_LOG_VERBOSE, "HEVC with NVIDIA VDPAU drivers is buggy, skipping.\n");
-        return AVERROR(ENOTSUP);
+        int driver_version = 0;
+        sscanf(info_string, "NVIDIA VDPAU Driver Shared Library  %d", &driver_version);
+        if (driver_version < 410) {
+            av_log(avctx, AV_LOG_VERBOSE, "HEVC with NVIDIA VDPAU drivers is buggy, skipping.\n");
+            return AVERROR(ENOTSUP);
+        }
     }
 
     status = vdctx->get_proc_address(vdctx->device,
@@ -388,55 +396,6 @@ int ff_vdpau_add_buffer(struct vdpau_picture_context *pic_ctx,
     buffers->bitstream_bytes = size;
     return 0;
 }
-
-#if FF_API_VDPAU_PROFILE
-int av_vdpau_get_profile(AVCodecContext *avctx, VdpDecoderProfile *profile)
-{
-#define PROFILE(prof)                      \
-do {                                       \
-    *profile = VDP_DECODER_PROFILE_##prof; \
-    return 0;                              \
-} while (0)
-
-    switch (avctx->codec_id) {
-    case AV_CODEC_ID_MPEG1VIDEO:               PROFILE(MPEG1);
-    case AV_CODEC_ID_MPEG2VIDEO:
-        switch (avctx->profile) {
-        case FF_PROFILE_MPEG2_MAIN:            PROFILE(MPEG2_MAIN);
-        case FF_PROFILE_MPEG2_SIMPLE:          PROFILE(MPEG2_SIMPLE);
-        default:                               return AVERROR(EINVAL);
-        }
-    case AV_CODEC_ID_H263:                     PROFILE(MPEG4_PART2_ASP);
-    case AV_CODEC_ID_MPEG4:
-        switch (avctx->profile) {
-        case FF_PROFILE_MPEG4_SIMPLE:          PROFILE(MPEG4_PART2_SP);
-        case FF_PROFILE_MPEG4_ADVANCED_SIMPLE: PROFILE(MPEG4_PART2_ASP);
-        default:                               return AVERROR(EINVAL);
-        }
-    case AV_CODEC_ID_H264:
-        switch (avctx->profile & ~FF_PROFILE_H264_INTRA) {
-        case FF_PROFILE_H264_BASELINE:         PROFILE(H264_BASELINE);
-        case FF_PROFILE_H264_CONSTRAINED_BASELINE:
-        case FF_PROFILE_H264_MAIN:             PROFILE(H264_MAIN);
-        case FF_PROFILE_H264_HIGH:             PROFILE(H264_HIGH);
-#ifdef VDP_DECODER_PROFILE_H264_EXTENDED
-        case FF_PROFILE_H264_EXTENDED:         PROFILE(H264_EXTENDED);
-#endif
-        default:                               return AVERROR(EINVAL);
-        }
-    case AV_CODEC_ID_WMV3:
-    case AV_CODEC_ID_VC1:
-        switch (avctx->profile) {
-        case FF_PROFILE_VC1_SIMPLE:            PROFILE(VC1_SIMPLE);
-        case FF_PROFILE_VC1_MAIN:              PROFILE(VC1_MAIN);
-        case FF_PROFILE_VC1_ADVANCED:          PROFILE(VC1_ADVANCED);
-        default:                               return AVERROR(EINVAL);
-        }
-    }
-    return AVERROR(EINVAL);
-#undef PROFILE
-}
-#endif /* FF_API_VDPAU_PROFILE */
 
 AVVDPAUContext *av_vdpau_alloc_context(void)
 {

@@ -1,5 +1,5 @@
 /*
- * Intel MediaSDK QSV based H.264 enccoder
+ * Intel MediaSDK QSV based H.264 encoder
  *
  * copyright (c) 2013 Yukinori Yamazoe
  *
@@ -34,6 +34,7 @@
 #include "qsv.h"
 #include "qsv_internal.h"
 #include "qsvenc.h"
+#include "atsc_a53.h"
 
 typedef struct QSVH264EncContext {
     AVClass *class;
@@ -103,6 +104,9 @@ static const AVOption options[] = {
     QSV_COMMON_OPTS
 
     { "cavlc",          "Enable CAVLC",                           OFFSET(qsv.cavlc),          AV_OPT_TYPE_INT, { .i64 = 0 },   0,          1, VE },
+#if QSV_HAVE_VCM
+    { "vcm",      "Use the video conferencing mode ratecontrol",  OFFSET(qsv.vcm),      AV_OPT_TYPE_INT, { .i64 = 0  },  0, 1,         VE },
+#endif
     { "idr_interval", "Distance (in I-frames) between IDR frames", OFFSET(qsv.idr_interval), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, VE },
     { "pic_timing_sei",    "Insert picture timing SEI with pic_struct_syntax element", OFFSET(qsv.pic_timing_sei), AV_OPT_TYPE_INT, { .i64 = 1 }, 0, 1, VE },
     { "single_sei_nal_unit",    "Put all the SEI messages into one NALU",        OFFSET(qsv.single_sei_nal_unit),     AV_OPT_TYPE_INT, { .i64 = -1 }, -1,          1, VE },
@@ -129,12 +133,6 @@ static const AVOption options[] = {
     { "int_ref_qp_delta",   "QP difference for the refresh MBs",                 OFFSET(qsv.int_ref_qp_delta),        AV_OPT_TYPE_INT, { .i64 = INT16_MIN }, INT16_MIN,  INT16_MAX, VE },
     { "recovery_point_sei", "Insert recovery point SEI messages",                OFFSET(qsv.recovery_point_sei),      AV_OPT_TYPE_INT, { .i64 = -1 },               -1,          1, VE },
 
-    { "trellis",             "Trellis quantization",                             OFFSET(qsv.trellis),                 AV_OPT_TYPE_FLAGS, { .i64 = 0 }, 0, UINT_MAX, VE, "trellis" },
-        { "off", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_TRELLIS_OFF }, .flags = VE, "trellis" },
-        { "I",   NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_TRELLIS_I },   .flags = VE, "trellis" },
-        { "P",   NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_TRELLIS_P },   .flags = VE, "trellis" },
-        { "B",   NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_TRELLIS_B },   .flags = VE, "trellis" },
-
     { "profile", NULL, OFFSET(qsv.profile), AV_OPT_TYPE_INT, { .i64 = MFX_PROFILE_UNKNOWN }, 0, INT_MAX, VE, "profile" },
     { "unknown" , NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_PROFILE_UNKNOWN      }, INT_MIN, INT_MAX,     VE, "profile" },
     { "baseline", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_PROFILE_AVC_BASELINE }, INT_MIN, INT_MAX,     VE, "profile" },
@@ -146,8 +144,12 @@ static const AVOption options[] = {
     { "aud", "Insert the Access Unit Delimiter NAL", OFFSET(qsv.aud), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 1, VE},
 
 #if QSV_HAVE_MF
-    { "mfmode", "Multi-Frame Mode", OFFSET(qsv.mfmode), AV_OPT_TYPE_INT, { .i64 = MFX_MF_AUTO }, 0, INT_MAX, VE },
+    { "mfmode", "Multi-Frame Mode", OFFSET(qsv.mfmode), AV_OPT_TYPE_INT, { .i64 = MFX_MF_AUTO }, MFX_MF_DEFAULT, MFX_MF_AUTO, VE, "mfmode"},
+    { "off"    , NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_MF_DISABLED }, INT_MIN, INT_MAX,     VE, "mfmode" },
+    { "auto"   , NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_MF_AUTO     }, INT_MIN, INT_MAX,     VE, "mfmode" },
 #endif
+
+    { "repeat_pps", "repeat pps for every frame", OFFSET(qsv.repeat_pps), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, VE },
 
     { NULL },
 };
@@ -165,18 +167,14 @@ static const AVCodecDefault qsv_enc_defaults[] = {
     // same as the x264 default
     { "g",         "250"   },
     { "bf",        "3"     },
-#if FF_API_CODER_TYPE
-    { "coder",     "-1"    },
-#endif
-
+    { "qmin",      "-1"    },
+    { "qmax",      "-1"    },
+    { "trellis",   "-1"    },
     { "flags",     "+cgop" },
-#if FF_API_PRIVATE_OPT
-    { "b_strategy", "-1"   },
-#endif
     { NULL },
 };
 
-AVCodec ff_h264_qsv_encoder = {
+const AVCodec ff_h264_qsv_encoder = {
     .name           = "h264_qsv",
     .long_name      = NULL_IF_CONFIG_SMALL("H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10 (Intel Quick Sync Video acceleration)"),
     .priv_data_size = sizeof(QSVH264EncContext),
@@ -194,4 +192,5 @@ AVCodec ff_h264_qsv_encoder = {
     .defaults       = qsv_enc_defaults,
     .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
     .wrapper_name   = "qsv",
+    .hw_configs     = ff_qsv_enc_hw_configs,
 };

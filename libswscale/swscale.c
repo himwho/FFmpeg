@@ -30,6 +30,7 @@
 #include "libavutil/imgutils.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/mathematics.h"
+#include "libavutil/mem_internal.h"
 #include "libavutil/pixdesc.h"
 #include "config.h"
 #include "rgb2rgb.h"
@@ -74,8 +75,11 @@ static void hScale16To19_c(SwsContext *c, int16_t *_dst, int dstW,
     int bits            = desc->comp[0].depth - 1;
     int sh              = bits - 4;
 
-    if((isAnyRGB(c->srcFormat) || c->srcFormat==AV_PIX_FMT_PAL8) && desc->comp[0].depth<16)
-        sh= 9;
+    if ((isAnyRGB(c->srcFormat) || c->srcFormat==AV_PIX_FMT_PAL8) && desc->comp[0].depth<16) {
+        sh = 9;
+    } else if (desc->flags & AV_PIX_FMT_FLAG_FLOAT) { /* float input are process like uint 16bpc */
+        sh = 16 - 1 - 4;
+    }
 
     for (i = 0; i < dstW; i++) {
         int j;
@@ -99,8 +103,11 @@ static void hScale16To15_c(SwsContext *c, int16_t *dst, int dstW,
     const uint16_t *src = (const uint16_t *) _src;
     int sh              = desc->comp[0].depth - 1;
 
-    if(sh<15)
-        sh= isAnyRGB(c->srcFormat) || c->srcFormat==AV_PIX_FMT_PAL8 ? 13 : (desc->comp[0].depth - 1);
+    if (sh<15) {
+        sh = isAnyRGB(c->srcFormat) || c->srcFormat==AV_PIX_FMT_PAL8 ? 13 : (desc->comp[0].depth - 1);
+    } else if (desc->flags & AV_PIX_FMT_FLAG_FLOAT) { /* float input are process like uint 16bpc */
+        sh = 16 - 1;
+    }
 
     for (i = 0; i < dstW; i++) {
         int j;
@@ -260,11 +267,8 @@ static int swscale(SwsContext *c, const uint8_t *src[],
 
     /* vars which will change and which we need to store back in the context */
     int dstY         = c->dstY;
-    int lumBufIndex  = c->lumBufIndex;
-    int chrBufIndex  = c->chrBufIndex;
     int lastInLumBuf = c->lastInLumBuf;
     int lastInChrBuf = c->lastInChrBuf;
-
 
     int lumStart = 0;
     int lumEnd = c->descIndex[0];
@@ -277,25 +281,21 @@ static int swscale(SwsContext *c, const uint8_t *src[],
     SwsSlice *vout_slice = &c->slice[c->numSlice-1];
     SwsFilterDescriptor *desc = c->desc;
 
-
     int needAlpha = c->needAlpha;
 
     int hasLumHoles = 1;
     int hasChrHoles = 1;
 
-
     if (isPacked(c->srcFormat)) {
-        src[0] =
         src[1] =
         src[2] =
         src[3] = src[0];
-        srcStride[0] =
         srcStride[1] =
         srcStride[2] =
         srcStride[3] = srcStride[0];
     }
-    srcStride[1] <<= c->vChrDrop;
-    srcStride[2] <<= c->vChrDrop;
+    srcStride[1] *= 1 << c->vChrDrop;
+    srcStride[2] *= 1 << c->vChrDrop;
 
     DEBUG_BUFFERS("swscale() %p[%d] %p[%d] %p[%d] %p[%d] -> %p[%d] %p[%d] %p[%d] %p[%d]\n",
                   src[0], srcStride[0], src[1], srcStride[1],
@@ -335,8 +335,6 @@ static int swscale(SwsContext *c, const uint8_t *src[],
      * will not get executed. This is not really intended but works
      * currently, so people might do it. */
     if (srcSliceY == 0) {
-        lumBufIndex  = -1;
-        chrBufIndex  = -1;
         dstY         = 0;
         lastInLumBuf = -1;
         lastInChrBuf = -1;
@@ -460,7 +458,6 @@ static int swscale(SwsContext *c, const uint8_t *src[],
                 desc[i].process(c, &desc[i], firstPosY, lastPosY - firstPosY + 1);
         }
 
-        lumBufIndex += lastLumSrcY - lastInLumBuf;
         lastInLumBuf = lastLumSrcY;
 
         if (cPosY < lastChrSrcY + 1) {
@@ -468,20 +465,13 @@ static int swscale(SwsContext *c, const uint8_t *src[],
                 desc[i].process(c, &desc[i], firstCPosY, lastCPosY - firstCPosY + 1);
         }
 
-        chrBufIndex += lastChrSrcY - lastInChrBuf;
         lastInChrBuf = lastChrSrcY;
 
-        // wrap buf index around to stay inside the ring buffer
-        if (lumBufIndex >= vLumFilterSize)
-            lumBufIndex -= vLumFilterSize;
-        if (chrBufIndex >= vChrFilterSize)
-            chrBufIndex -= vChrFilterSize;
         if (!enough_lines)
             break;  // we can't output a dstY line so let's try with the next slice
 
 #if HAVE_MMX_INLINE
-        ff_updateMMXDitherTables(c, dstY, lumBufIndex, chrBufIndex,
-                              lastInLumBuf, lastInChrBuf);
+        ff_updateMMXDitherTables(c, dstY);
 #endif
         if (should_dither) {
             c->chrDither8 = ff_dither_8x8_128[chrDstY & 7];
@@ -497,10 +487,8 @@ static int swscale(SwsContext *c, const uint8_t *src[],
                            yuv2packed1, yuv2packed2, yuv2packedX, yuv2anyX, use_mmx_vfilter);
         }
 
-        {
-            for (i = vStart; i < vEnd; ++i)
-                desc[i].process(c, &desc[i], dstY, 1);
-        }
+        for (i = vStart; i < vEnd; ++i)
+            desc[i].process(c, &desc[i], dstY, 1);
     }
     if (isPlanar(dstFormat) && isALPHA(dstFormat) && !needAlpha) {
         int length = dstW;
@@ -511,6 +499,11 @@ static int swscale(SwsContext *c, const uint8_t *src[],
             fillPlane16(dst[3], dstStride[3], length, height, lastDstY,
                     1, desc->comp[3].depth,
                     isBE(dstFormat));
+        } else if (is32BPS(dstFormat)) {
+            const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(dstFormat);
+            fillPlane32(dst[3], dstStride[3], length, height, lastDstY,
+                    1, desc->comp[3].depth,
+                    isBE(dstFormat), desc->flags & AV_PIX_FMT_FLAG_FLOAT);
         } else
             fillPlane(dst[3], dstStride[3], length, height, lastDstY, 255);
     }
@@ -523,8 +516,6 @@ static int swscale(SwsContext *c, const uint8_t *src[],
 
     /* store changed local vars back in the context */
     c->dstY         = dstY;
-    c->lumBufIndex  = lumBufIndex;
-    c->chrBufIndex  = chrBufIndex;
     c->lastInLumBuf = lastInLumBuf;
     c->lastInChrBuf = lastInChrBuf;
 
@@ -566,7 +557,6 @@ static av_cold void sws_init_swscale(SwsContext *c)
 
     ff_sws_init_input_funcs(c);
 
-
     if (c->srcBpc == 8) {
         if (c->dstBpc <= 14) {
             c->hyScale = c->hcScale = hScale8To15_c;
@@ -589,7 +579,7 @@ static av_cold void sws_init_swscale(SwsContext *c)
         c->needs_hcscale = 1;
 }
 
-SwsFunc ff_getSwsFunc(SwsContext *c)
+void ff_sws_init_scale(SwsContext *c)
 {
     sws_init_swscale(c);
 
@@ -601,8 +591,6 @@ SwsFunc ff_getSwsFunc(SwsContext *c)
         ff_sws_init_swscale_aarch64(c);
     if (ARCH_ARM)
         ff_sws_init_swscale_arm(c);
-
-    return swscale;
 }
 
 static void reset_ptr(const uint8_t *src[], enum AVPixelFormat format)
@@ -746,134 +734,36 @@ static void rgb48Toxyz12(struct SwsContext *c, uint16_t *dst,
     }
 }
 
-/**
- * swscale wrapper, so we don't need to export the SwsContext.
- * Assumes planar YUV to be in YUV order instead of YVU.
- */
-int attribute_align_arg sws_scale(struct SwsContext *c,
-                                  const uint8_t * const srcSlice[],
-                                  const int srcStride[], int srcSliceY,
-                                  int srcSliceH, uint8_t *const dst[],
-                                  const int dstStride[])
+static void update_palette(SwsContext *c, const uint32_t *pal)
 {
-    int i, ret;
-    const uint8_t *src2[4];
-    uint8_t *dst2[4];
-    uint8_t *rgb0_tmp = NULL;
-    int macro_height = isBayer(c->srcFormat) ? 2 : (1 << c->chrSrcVSubSample);
-    // copy strides, so they can safely be modified
-    int srcStride2[4];
-    int dstStride2[4];
-    int srcSliceY_internal = srcSliceY;
-
-    if (!srcStride || !dstStride || !dst || !srcSlice) {
-        av_log(c, AV_LOG_ERROR, "One of the input parameters to sws_scale() is NULL, please check the calling code\n");
-        return 0;
-    }
-
-    for (i=0; i<4; i++) {
-        srcStride2[i] = srcStride[i];
-        dstStride2[i] = dstStride[i];
-    }
-
-    if ((srcSliceY & (macro_height-1)) ||
-        ((srcSliceH& (macro_height-1)) && srcSliceY + srcSliceH != c->srcH) ||
-        srcSliceY + srcSliceH > c->srcH) {
-        av_log(c, AV_LOG_ERROR, "Slice parameters %d, %d are invalid\n", srcSliceY, srcSliceH);
-        return AVERROR(EINVAL);
-    }
-
-    if (c->gamma_flag && c->cascaded_context[0]) {
-
-
-        ret = sws_scale(c->cascaded_context[0],
-                    srcSlice, srcStride, srcSliceY, srcSliceH,
-                    c->cascaded_tmp, c->cascaded_tmpStride);
-
-        if (ret < 0)
-            return ret;
-
-        if (c->cascaded_context[2])
-            ret = sws_scale(c->cascaded_context[1], (const uint8_t * const *)c->cascaded_tmp, c->cascaded_tmpStride, srcSliceY, srcSliceH, c->cascaded1_tmp, c->cascaded1_tmpStride);
-        else
-            ret = sws_scale(c->cascaded_context[1], (const uint8_t * const *)c->cascaded_tmp, c->cascaded_tmpStride, srcSliceY, srcSliceH, dst, dstStride);
-
-        if (ret < 0)
-            return ret;
-
-        if (c->cascaded_context[2]) {
-            ret = sws_scale(c->cascaded_context[2],
-                        (const uint8_t * const *)c->cascaded1_tmp, c->cascaded1_tmpStride, c->cascaded_context[1]->dstY - ret, c->cascaded_context[1]->dstY,
-                        dst, dstStride);
+    for (int i = 0; i < 256; i++) {
+        int r, g, b, y, u, v, a = 0xff;
+        if (c->srcFormat == AV_PIX_FMT_PAL8) {
+            uint32_t p = pal[i];
+            a = (p >> 24) & 0xFF;
+            r = (p >> 16) & 0xFF;
+            g = (p >>  8) & 0xFF;
+            b =  p        & 0xFF;
+        } else if (c->srcFormat == AV_PIX_FMT_RGB8) {
+            r = ( i >> 5     ) * 36;
+            g = ((i >> 2) & 7) * 36;
+            b = ( i       & 3) * 85;
+        } else if (c->srcFormat == AV_PIX_FMT_BGR8) {
+            b = ( i >> 6     ) * 85;
+            g = ((i >> 3) & 7) * 36;
+            r = ( i       & 7) * 36;
+        } else if (c->srcFormat == AV_PIX_FMT_RGB4_BYTE) {
+            r = ( i >> 3     ) * 255;
+            g = ((i >> 1) & 3) * 85;
+            b = ( i       & 1) * 255;
+        } else if (c->srcFormat == AV_PIX_FMT_GRAY8 || c->srcFormat == AV_PIX_FMT_GRAY8A) {
+            r = g = b = i;
+        } else {
+            av_assert1(c->srcFormat == AV_PIX_FMT_BGR4_BYTE);
+            b = ( i >> 3     ) * 255;
+            g = ((i >> 1) & 3) * 85;
+            r = ( i       & 1) * 255;
         }
-        return ret;
-    }
-
-    if (c->cascaded_context[0] && srcSliceY == 0 && srcSliceH == c->cascaded_context[0]->srcH) {
-        ret = sws_scale(c->cascaded_context[0],
-                        srcSlice, srcStride, srcSliceY, srcSliceH,
-                        c->cascaded_tmp, c->cascaded_tmpStride);
-        if (ret < 0)
-            return ret;
-        ret = sws_scale(c->cascaded_context[1],
-                        (const uint8_t * const * )c->cascaded_tmp, c->cascaded_tmpStride, 0, c->cascaded_context[0]->dstH,
-                        dst, dstStride);
-        return ret;
-    }
-
-    memcpy(src2, srcSlice, sizeof(src2));
-    memcpy(dst2, dst, sizeof(dst2));
-
-    // do not mess up sliceDir if we have a "trailing" 0-size slice
-    if (srcSliceH == 0)
-        return 0;
-
-    if (!check_image_pointers(srcSlice, c->srcFormat, srcStride)) {
-        av_log(c, AV_LOG_ERROR, "bad src image pointers\n");
-        return 0;
-    }
-    if (!check_image_pointers((const uint8_t* const*)dst, c->dstFormat, dstStride)) {
-        av_log(c, AV_LOG_ERROR, "bad dst image pointers\n");
-        return 0;
-    }
-
-    if (c->sliceDir == 0 && srcSliceY != 0 && srcSliceY + srcSliceH != c->srcH) {
-        av_log(c, AV_LOG_ERROR, "Slices start in the middle!\n");
-        return 0;
-    }
-    if (c->sliceDir == 0) {
-        if (srcSliceY == 0) c->sliceDir = 1; else c->sliceDir = -1;
-    }
-
-    if (usePal(c->srcFormat)) {
-        for (i = 0; i < 256; i++) {
-            int r, g, b, y, u, v, a = 0xff;
-            if (c->srcFormat == AV_PIX_FMT_PAL8) {
-                uint32_t p = ((const uint32_t *)(srcSlice[1]))[i];
-                a = (p >> 24) & 0xFF;
-                r = (p >> 16) & 0xFF;
-                g = (p >>  8) & 0xFF;
-                b =  p        & 0xFF;
-            } else if (c->srcFormat == AV_PIX_FMT_RGB8) {
-                r = ( i >> 5     ) * 36;
-                g = ((i >> 2) & 7) * 36;
-                b = ( i       & 3) * 85;
-            } else if (c->srcFormat == AV_PIX_FMT_BGR8) {
-                b = ( i >> 6     ) * 85;
-                g = ((i >> 3) & 7) * 36;
-                r = ( i       & 7) * 36;
-            } else if (c->srcFormat == AV_PIX_FMT_RGB4_BYTE) {
-                r = ( i >> 3     ) * 255;
-                g = ((i >> 1) & 3) * 85;
-                b = ( i       & 1) * 255;
-            } else if (c->srcFormat == AV_PIX_FMT_GRAY8 || c->srcFormat == AV_PIX_FMT_GRAY8A) {
-                r = g = b = i;
-            } else {
-                av_assert1(c->srcFormat == AV_PIX_FMT_BGR4_BYTE);
-                b = ( i >> 3     ) * 255;
-                g = ((i >> 1) & 3) * 85;
-                r = ( i       & 1) * 255;
-            }
 #define RGB2YUV_SHIFT 15
 #define BY ( (int) (0.114 * 219 / 255 * (1 << RGB2YUV_SHIFT) + 0.5))
 #define BV (-(int) (0.081 * 224 / 255 * (1 << RGB2YUV_SHIFT) + 0.5))
@@ -885,48 +775,170 @@ int attribute_align_arg sws_scale(struct SwsContext *c,
 #define RV ( (int) (0.500 * 224 / 255 * (1 << RGB2YUV_SHIFT) + 0.5))
 #define RU (-(int) (0.169 * 224 / 255 * (1 << RGB2YUV_SHIFT) + 0.5))
 
-            y = av_clip_uint8((RY * r + GY * g + BY * b + ( 33 << (RGB2YUV_SHIFT - 1))) >> RGB2YUV_SHIFT);
-            u = av_clip_uint8((RU * r + GU * g + BU * b + (257 << (RGB2YUV_SHIFT - 1))) >> RGB2YUV_SHIFT);
-            v = av_clip_uint8((RV * r + GV * g + BV * b + (257 << (RGB2YUV_SHIFT - 1))) >> RGB2YUV_SHIFT);
-            c->pal_yuv[i]= y + (u<<8) + (v<<16) + ((unsigned)a<<24);
+        y = av_clip_uint8((RY * r + GY * g + BY * b + ( 33 << (RGB2YUV_SHIFT - 1))) >> RGB2YUV_SHIFT);
+        u = av_clip_uint8((RU * r + GU * g + BU * b + (257 << (RGB2YUV_SHIFT - 1))) >> RGB2YUV_SHIFT);
+        v = av_clip_uint8((RV * r + GV * g + BV * b + (257 << (RGB2YUV_SHIFT - 1))) >> RGB2YUV_SHIFT);
+        c->pal_yuv[i]= y + (u<<8) + (v<<16) + ((unsigned)a<<24);
 
-            switch (c->dstFormat) {
-            case AV_PIX_FMT_BGR32:
+        switch (c->dstFormat) {
+        case AV_PIX_FMT_BGR32:
 #if !HAVE_BIGENDIAN
-            case AV_PIX_FMT_RGB24:
+        case AV_PIX_FMT_RGB24:
 #endif
-                c->pal_rgb[i]=  r + (g<<8) + (b<<16) + ((unsigned)a<<24);
-                break;
-            case AV_PIX_FMT_BGR32_1:
+            c->pal_rgb[i]=  r + (g<<8) + (b<<16) + ((unsigned)a<<24);
+            break;
+        case AV_PIX_FMT_BGR32_1:
 #if HAVE_BIGENDIAN
-            case AV_PIX_FMT_BGR24:
+        case AV_PIX_FMT_BGR24:
 #endif
-                c->pal_rgb[i]= a + (r<<8) + (g<<16) + ((unsigned)b<<24);
-                break;
-            case AV_PIX_FMT_RGB32_1:
+            c->pal_rgb[i]= a + (r<<8) + (g<<16) + ((unsigned)b<<24);
+            break;
+        case AV_PIX_FMT_RGB32_1:
 #if HAVE_BIGENDIAN
-            case AV_PIX_FMT_RGB24:
+        case AV_PIX_FMT_RGB24:
 #endif
-                c->pal_rgb[i]= a + (b<<8) + (g<<16) + ((unsigned)r<<24);
-                break;
-            case AV_PIX_FMT_RGB32:
+            c->pal_rgb[i]= a + (b<<8) + (g<<16) + ((unsigned)r<<24);
+            break;
+        case AV_PIX_FMT_RGB32:
 #if !HAVE_BIGENDIAN
-            case AV_PIX_FMT_BGR24:
+        case AV_PIX_FMT_BGR24:
 #endif
-            default:
-                c->pal_rgb[i]=  b + (g<<8) + (r<<16) + ((unsigned)a<<24);
-            }
+        default:
+            c->pal_rgb[i]=  b + (g<<8) + (r<<16) + ((unsigned)a<<24);
         }
+    }
+}
+
+static int scale_gamma(SwsContext *c,
+                       const uint8_t * const srcSlice[], const int srcStride[],
+                       int srcSliceY, int srcSliceH,
+                       uint8_t * const dst[], const int dstStride[])
+{
+    int ret = sws_scale(c->cascaded_context[0],
+                        srcSlice, srcStride, srcSliceY, srcSliceH,
+                        c->cascaded_tmp, c->cascaded_tmpStride);
+
+    if (ret < 0)
+        return ret;
+
+    if (c->cascaded_context[2])
+        ret = sws_scale(c->cascaded_context[1], (const uint8_t * const *)c->cascaded_tmp,
+                        c->cascaded_tmpStride, srcSliceY, srcSliceH, c->cascaded1_tmp,
+                        c->cascaded1_tmpStride);
+    else
+        ret = sws_scale(c->cascaded_context[1], (const uint8_t * const *)c->cascaded_tmp,
+                        c->cascaded_tmpStride, srcSliceY, srcSliceH, dst, dstStride);
+
+    if (ret < 0)
+        return ret;
+
+    if (c->cascaded_context[2]) {
+        ret = sws_scale(c->cascaded_context[2], (const uint8_t * const *)c->cascaded1_tmp,
+                        c->cascaded1_tmpStride, c->cascaded_context[1]->dstY - ret,
+                        c->cascaded_context[1]->dstY, dst, dstStride);
+    }
+    return ret;
+}
+
+static int scale_cascaded(SwsContext *c,
+                          const uint8_t * const srcSlice[], const int srcStride[],
+                          int srcSliceY, int srcSliceH,
+                          uint8_t * const dst[], const int dstStride[])
+{
+    int ret = sws_scale(c->cascaded_context[0],
+                        srcSlice, srcStride, srcSliceY, srcSliceH,
+                        c->cascaded_tmp, c->cascaded_tmpStride);
+    if (ret < 0)
+        return ret;
+    ret = sws_scale(c->cascaded_context[1],
+                    (const uint8_t * const * )c->cascaded_tmp, c->cascaded_tmpStride,
+                    0, c->cascaded_context[0]->dstH, dst, dstStride);
+    return ret;
+}
+
+/**
+ * swscale wrapper, so we don't need to export the SwsContext.
+ * Assumes planar YUV to be in YUV order instead of YVU.
+ */
+int attribute_align_arg sws_scale(struct SwsContext *c,
+                                  const uint8_t * const srcSlice[],
+                                  const int srcStride[], int srcSliceY,
+                                  int srcSliceH, uint8_t *const dst[],
+                                  const int dstStride[])
+{
+    const int frame_start = !c->sliceDir;
+    int i, ret;
+    const uint8_t *src2[4];
+    uint8_t *dst2[4];
+    int macro_height = isBayer(c->srcFormat) ? 2 : (1 << c->chrSrcVSubSample);
+    // copy strides, so they can safely be modified
+    int srcStride2[4];
+    int dstStride2[4];
+    int srcSliceY_internal = srcSliceY;
+
+    if (!srcStride || !dstStride || !dst || !srcSlice) {
+        av_log(c, AV_LOG_ERROR, "One of the input parameters to sws_scale() is NULL, please check the calling code\n");
+        return AVERROR(EINVAL);
+    }
+
+    if ((srcSliceY & (macro_height-1)) ||
+        ((srcSliceH& (macro_height-1)) && srcSliceY + srcSliceH != c->srcH) ||
+        srcSliceY + srcSliceH > c->srcH) {
+        av_log(c, AV_LOG_ERROR, "Slice parameters %d, %d are invalid\n", srcSliceY, srcSliceH);
+        return AVERROR(EINVAL);
+    }
+
+    if (!check_image_pointers(srcSlice, c->srcFormat, srcStride)) {
+        av_log(c, AV_LOG_ERROR, "bad src image pointers\n");
+        return AVERROR(EINVAL);
+    }
+    if (!check_image_pointers((const uint8_t* const*)dst, c->dstFormat, dstStride)) {
+        av_log(c, AV_LOG_ERROR, "bad dst image pointers\n");
+        return AVERROR(EINVAL);
+    }
+
+    // do not mess up sliceDir if we have a "trailing" 0-size slice
+    if (srcSliceH == 0)
+        return 0;
+
+    if (c->gamma_flag && c->cascaded_context[0])
+        return scale_gamma(c, srcSlice, srcStride, srcSliceY, srcSliceH, dst, dstStride);
+
+    if (c->cascaded_context[0] && srcSliceY == 0 && srcSliceH == c->cascaded_context[0]->srcH)
+        return scale_cascaded(c, srcSlice, srcStride, srcSliceY, srcSliceH, dst, dstStride);
+
+    if (!srcSliceY && (c->flags & SWS_BITEXACT) && c->dither == SWS_DITHER_ED && c->dither_error[0])
+        for (i = 0; i < 4; i++)
+            memset(c->dither_error[i], 0, sizeof(c->dither_error[0][0]) * (c->dstW+2));
+
+    if (usePal(c->srcFormat))
+        update_palette(c, (const uint32_t *)srcSlice[1]);
+
+    memcpy(src2,       srcSlice,  sizeof(src2));
+    memcpy(dst2,       dst,       sizeof(dst2));
+    memcpy(srcStride2, srcStride, sizeof(srcStride2));
+    memcpy(dstStride2, dstStride, sizeof(dstStride2));
+
+    if (frame_start) {
+        if (srcSliceY != 0 && srcSliceY + srcSliceH != c->srcH) {
+            av_log(c, AV_LOG_ERROR, "Slices start in the middle!\n");
+            return AVERROR(EINVAL);
+        }
+
+        c->sliceDir = (srcSliceY == 0) ? 1 : -1;
     }
 
     if (c->src0Alpha && !c->dst0Alpha && isALPHA(c->dstFormat)) {
         uint8_t *base;
         int x,y;
-        rgb0_tmp = av_malloc(FFABS(srcStride[0]) * srcSliceH + 32);
-        if (!rgb0_tmp)
+
+        av_fast_malloc(&c->rgb0_scratch, &c->rgb0_scratch_allocated,
+                       FFABS(srcStride[0]) * srcSliceH + 32);
+        if (!c->rgb0_scratch)
             return AVERROR(ENOMEM);
 
-        base = srcStride[0] < 0 ? rgb0_tmp - srcStride[0] * (srcSliceH-1) : rgb0_tmp;
+        base = srcStride[0] < 0 ? c->rgb0_scratch - srcStride[0] * (srcSliceH-1) :
+                                  c->rgb0_scratch;
         for (y=0; y<srcSliceH; y++){
             memcpy(base + srcStride[0]*y, src2[0] + srcStride[0]*y, 4*c->srcW);
             for (x=c->src0Alpha-1; x<4*c->srcW; x+=4) {
@@ -938,19 +950,18 @@ int attribute_align_arg sws_scale(struct SwsContext *c,
 
     if (c->srcXYZ && !(c->dstXYZ && c->srcW==c->dstW && c->srcH==c->dstH)) {
         uint8_t *base;
-        rgb0_tmp = av_malloc(FFABS(srcStride[0]) * srcSliceH + 32);
-        if (!rgb0_tmp)
+
+        av_fast_malloc(&c->xyz_scratch, &c->xyz_scratch_allocated,
+                       FFABS(srcStride[0]) * srcSliceH + 32);
+        if (!c->xyz_scratch)
             return AVERROR(ENOMEM);
 
-        base = srcStride[0] < 0 ? rgb0_tmp - srcStride[0] * (srcSliceH-1) : rgb0_tmp;
+        base = srcStride[0] < 0 ? c->xyz_scratch - srcStride[0] * (srcSliceH-1) :
+                                  c->xyz_scratch;
 
         xyz12Torgb48(c, (uint16_t*)base, (const uint16_t*)src2[0], srcStride[0]/2, srcSliceH);
         src2[0] = base;
     }
-
-    if (!srcSliceY && (c->flags & SWS_BITEXACT) && c->dither == SWS_DITHER_ED && c->dither_error[0])
-        for (i = 0; i < 4; i++)
-            memset(c->dither_error[i], 0, sizeof(c->dither_error[0][0]) * (c->dstW+2));
 
     if (c->sliceDir != 1) {
         // slices go from bottom to top => we flip the image internally
@@ -974,11 +985,11 @@ int attribute_align_arg sws_scale(struct SwsContext *c,
     reset_ptr(src2, c->srcFormat);
     reset_ptr((void*)dst2, c->dstFormat);
 
-    /* reset slice direction at end of frame */
-    if (srcSliceY_internal + srcSliceH == c->srcH)
-        c->sliceDir = 0;
-    ret = c->swscale(c, src2, srcStride2, srcSliceY_internal, srcSliceH, dst2, dstStride2);
-
+    if (c->convert_unscaled)
+        ret = c->convert_unscaled(c, src2, srcStride2, srcSliceY_internal, srcSliceH,
+                                  dst2, dstStride2);
+    else
+        ret = swscale(c, src2, srcStride2, srcSliceY_internal, srcSliceH, dst2, dstStride2);
 
     if (c->dstXYZ && !(c->srcXYZ && c->srcW==c->dstW && c->srcH==c->dstH)) {
         int dstY = c->dstY ? c->dstY : srcSliceY + srcSliceH;
@@ -991,6 +1002,9 @@ int attribute_align_arg sws_scale(struct SwsContext *c,
         rgb48Toxyz12(c, dst16, dst16, dstStride2[0]/2, ret);
     }
 
-    av_free(rgb0_tmp);
+    /* reset slice direction at end of frame */
+    if (srcSliceY_internal + srcSliceH == c->srcH)
+        c->sliceDir = 0;
+
     return ret;
 }
